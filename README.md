@@ -1,8 +1,12 @@
 # x-metrics-pipeline
 
+[github.com/chapse57/x-metrics-pipeline](https://github.com/chapse57/x-metrics-pipeline)
+
 Measure X (Twitter) accounts from a logged-in timeline, classify them with an LLM **behind deterministic guardrails**, validate every number, and ship a CSV + a single-file dashboard — on a schedule.
 
 Built from a paid engagement (100 trading-niche accounts for a day-trading platform's outreach list, Sept 2026). The first 100 were measured by hand; this is the tool that makes that the last time.
+
+Sister project: [data-refinery](https://github.com/chapse57/data-refinery) — the same guardrail and validation ideas applied to cleaning messy contact/company spreadsheets.
 
 ![what the agent does and what catches it](docs/architecture.png)
 
