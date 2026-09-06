@@ -1,0 +1,15 @@
+{
+  "captured": "2026-09-06T00:20Z, logged-in x.com profile timeline (@realFatCat1), Chrome",
+  "followers_header_span": ["3,143", "12.5K", "1.3M"],
+  "group_aria_labels": [
+    "3 replies, 1 repost, 45 likes, 10 bookmarks, 2911 views",
+    "5 replies, 1 repost, 38 likes, 9 bookmarks, 3900 views",
+    "13 likes, 1157 views",
+    "21 likes, 2 bookmarks, 1410 views"
+  ],
+  "button_aria_labels": [
+    ["3 Replies. Reply", "1 repost. Repost", "45 Likes. Like", "2911 views. View post analytics"],
+    ["0 Replies. Reply", "0 reposts. Repost", "13 Likes. Like", "1157 views. View post analytics"]
+  ],
+  "note": "X omits zero-valued fields from the group label; the button labels always carry all four."
+}

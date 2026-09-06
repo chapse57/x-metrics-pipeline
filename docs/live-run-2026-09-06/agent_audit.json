@@ -1,0 +1,10 @@
+{
+  "attempts": 3,
+  "by_verdict": {
+    "accepted": 3
+  },
+  "guardrail_fired": {},
+  "classifiers": {
+    "rule": 3
+  }
+}

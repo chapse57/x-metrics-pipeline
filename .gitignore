@@ -1,0 +1,13 @@
+out/*.db
+out/*.db-journal
+data/
+.xmetrics-profile/
+__pycache__/
+*.pyc
+.pytest_cache/
+docs/recording/*.webm
+.venv/
+out/
+*.webm
+xmetrics.egg-info/
+docs/recording/

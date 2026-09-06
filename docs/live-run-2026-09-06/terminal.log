@@ -1,0 +1,20 @@
+(.venv) PS C:\Users\PC\Desktop\Upwork\claude-work\x-metrics-pipeline> python -m xmetrics.cli import-cookies
+auth_token (hidden):
+ct0 (hidden):
+session OK — saved to .xmetrics-profile\xmetrics_session.json (re-applied on every collect)
+(.venv) PS C:\Users\PC\Desktop\Upwork\claude-work\x-metrics-pipeline> python -m xmetrics.cli --db out\x.db collect realFatCat1 merrittblack ProbableChris
+2026-09-06 12:09:52,241 INFO [1/3] @realfatcat1
+2026-09-06 12:10:00,676 INFO @realfatcat1 followers=3143 posts=20 ER=0.75% VR=41.6%
+2026-09-06 12:10:06,553 INFO [2/3] @merrittblack
+2026-09-06 12:10:13,031 INFO @merrittblack followers=18900 posts=20 ER=0.26% VR=23.8%
+2026-09-06 12:10:19,022 INFO [3/3] @probablechris
+2026-09-06 12:10:28,099 INFO @probablechris followers=7681 posts=20 ER=0.70% VR=60.1%
+run 20260906T030949Z-playwright: 3 measured, 0 pending
+(.venv) PS C:\Users\PC\Desktop\Upwork\claude-work\x-metrics-pipeline> python -m xmetrics.cli --db out\x.db classify
+{"accepted": 3, "review": 0, "rejected": 0}
+(.venv) PS C:\Users\PC\Desktop\Upwork\claude-work\x-metrics-pipeline> python -m xmetrics.cli --db out\x.db run --out out
+# Validation report — 2026-09-06 03:13 UTC
+rows checked: 3 | errors: 0 (excluded) | warnings: 0 (delivered, flagged)
+wrote out\influencers.csv
+wrote out\dashboard.html
+excluded: []

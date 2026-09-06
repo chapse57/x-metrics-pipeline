@@ -1,0 +1,49 @@
+# Weekly re-measure + validate + export. Idempotent: re-running the same week
+# overwrites the same run's rows, never duplicates them.
+#
+# Collection needs a logged-in X profile, which does not belong in CI. Two ways to run this:
+#   1. self-hosted runner on the machine that holds the Playwright profile (recommended), or
+#   2. keep collection local/cron and let CI only validate + export what was pushed.
+name: weekly-metrics
+on:
+  schedule:
+    - cron: "0 22 * * 0"   # Sunday 22:00 UTC = Monday 07:00 KST
+  workflow_dispatch:
+    inputs:
+      collect:
+        description: "run Playwright collection (self-hosted runner only)"
+        default: "false"
+jobs:
+  metrics:
+    runs-on: ${{ github.event.inputs.collect == 'true' && 'self-hosted' || 'ubuntu-latest' }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - run: pip install -e .[dev]
+      - run: python -m pytest -q
+      - name: collect (self-hosted only)
+        if: ${{ github.event.inputs.collect == 'true' }}
+        run: python -m xmetrics.cli --db data/xmetrics.db collect --profile "$XMETRICS_PROFILE" --headless
+        env: { XMETRICS_PROFILE: ${{ vars.XMETRICS_PROFILE }} }
+      - name: classify with guardrails (falls back to rule classifier without a key)
+        run: |
+          if [ -n "$ANTHROPIC_API_KEY" ]; then python -m xmetrics.cli --db data/xmetrics.db classify --claude; else python -m xmetrics.cli --db data/xmetrics.db classify; fi
+        env: { ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }} }
+      - name: validate (fail the job on errors) + export
+        run: python -m xmetrics.cli --db data/xmetrics.db run --out out --strict
+      - uses: actions/upload-artifact@v4
+        with: { name: deliverable, path: out/ }
+      - name: Slack summary (optional)
+        if: ${{ env.SLACK_WEBHOOK != '' }}
+        env: { SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }} }
+        run: |
+          python - <<'PY'
+          import json, os, urllib.request
+          rep = open("out/validation_report.md", encoding="utf-8").read().splitlines()[1]
+          audit = json.load(open("out/agent_audit.json"))
+          msg = f"x-metrics weekly: {rep}\nagent: {audit['by_verdict']} guardrails fired: {audit['guardrail_fired']}"
+          req = urllib.request.Request(os.environ["SLACK_WEBHOOK"], data=json.dumps({"text": msg}).encode(), headers={"Content-Type": "application/json"})
+          urllib.request.urlopen(req, timeout=20)
+          PY

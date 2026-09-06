@@ -1,0 +1,21 @@
+{
+  "name": "x-metrics weekly",
+  "nodes": [
+    {"parameters": {"rule": {"interval": [{"field": "weeks", "weeksInterval": 1, "triggerAtDay": [1], "triggerAtHour": 7}]}}, "name": "Every Monday 07:00", "type": "n8n-nodes-base.scheduleTrigger", "typeVersion": 1.2, "position": [0, 0]},
+    {"parameters": {"command": "cd /opt/x-metrics-pipeline && python -m xmetrics.cli --db data/xmetrics.db collect --profile /opt/xprofile --headless && python -m xmetrics.cli --db data/xmetrics.db classify --claude && python -m xmetrics.cli --db data/xmetrics.db run --out out --strict"}, "name": "Run pipeline", "type": "n8n-nodes-base.executeCommand", "typeVersion": 1, "position": [260, 0]},
+    {"parameters": {"filePath": "/opt/x-metrics-pipeline/out/validation_report.md"}, "name": "Read validation report", "type": "n8n-nodes-base.readBinaryFile", "typeVersion": 1, "position": [520, 0]},
+    {"parameters": {"conditions": {"number": [{"value1": "={{ $node['Run pipeline'].json.exitCode }}", "operation": "equal", "value2": 0}]}}, "name": "Validation passed?", "type": "n8n-nodes-base.if", "typeVersion": 1, "position": [780, 0]},
+    {"parameters": {"operation": "update", "documentId": "={{ $env.SHEET_ID }}", "sheetName": "influencers", "dataMode": "autoMapInputData", "options": {}}, "name": "Update Google Sheet", "type": "n8n-nodes-base.googleSheets", "typeVersion": 4, "position": [1040, -120]},
+    {"parameters": {"text": "=x-metrics weekly run: validation FAILED — see out/validation_report.md", "channel": "#ops"}, "name": "Slack: failed", "type": "n8n-nodes-base.slack", "typeVersion": 2, "position": [1040, 120]},
+    {"parameters": {"text": "=x-metrics weekly run OK — dashboard refreshed", "channel": "#ops"}, "name": "Slack: ok", "type": "n8n-nodes-base.slack", "typeVersion": 2, "position": [1300, -120]}
+  ],
+  "connections": {
+    "Every Monday 07:00": {"main": [[{"node": "Run pipeline", "type": "main", "index": 0}]]},
+    "Run pipeline": {"main": [[{"node": "Read validation report", "type": "main", "index": 0}]]},
+    "Read validation report": {"main": [[{"node": "Validation passed?", "type": "main", "index": 0}]]},
+    "Validation passed?": {"main": [[{"node": "Update Google Sheet", "type": "main", "index": 0}], [{"node": "Slack: failed", "type": "main", "index": 0}]]},
+    "Update Google Sheet": {"main": [[{"node": "Slack: ok", "type": "main", "index": 0}]]}
+  },
+  "settings": {"executionOrder": "v1"},
+  "meta": {"note": "Same flow as .github/workflows/weekly.yml, for teams that run n8n. The pipeline itself is the source of truth; n8n only schedules, routes on the validation exit code, and notifies."}
+}
