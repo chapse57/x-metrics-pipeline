@@ -1,0 +1,13 @@
+{
+  "attempts": 3,
+  "by_verdict": {
+    "accepted": 2,
+    "rejected": 1
+  },
+  "guardrail_fired": {
+    "evidence": 1
+  },
+  "classifiers": {
+    "claude:claude-haiku-4-5-20251001": 3
+  }
+}

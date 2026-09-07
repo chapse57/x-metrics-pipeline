@@ -12,10 +12,13 @@ The model's answer is never written to the deliverable directly. It goes through
 
   schema        parses as JSON with exactly the expected keys/types
   label_set     niche is in the closed set (no invented categories)
-  evidence      every evidence quote is a verbatim substring of the input
-                (catches hallucinated justifications)
+  evidence      every evidence quote is a verbatim substring of the input,
+                ignoring whitespace (catches hallucinated justifications, and
+                quotes stitched together across an ellipsis)
   confidence    >= threshold, else -> review queue (a human decides)
-  rule_conflict the rule-based screen disagrees on spam -> review queue
+  rule_conflict the five-pattern keyword screen disagrees on spam -> review queue
+                (kept deliberately small: its value is being an opinion the model
+                 cannot influence, not being a good spam detector)
 
 Every attempt is logged to agent_audit with the verdict and the checks that failed,
 which is where the README's "what the agent got wrong" table comes from.
@@ -127,7 +130,7 @@ No prose outside the JSON.""" % ", ".join(f'"{n}"' for n in NICHES)
 
 
 class ClaudeClassifier:
-    def __init__(self, model: str = "claude-sonnet-4-5", api_key: str | None = None):
+    def __init__(self, model: str = "claude-haiku-4-5-20251001", api_key: str | None = None):
         import anthropic  # imported lazily so the rest of the pipeline works without the SDK
         self._client = anthropic.Anthropic(api_key=api_key or os.environ.get("ANTHROPIC_API_KEY"))
         self.model = model
@@ -157,7 +160,16 @@ def _extract_json(raw: str) -> dict | None:
 
 
 def _norm(s: str) -> str:
-    return re.sub(r"\s+", " ", s).strip().lower()
+    """Comparison form for the evidence check: whitespace removed, case folded.
+
+    Whitespace carries no meaning here and is not reliably reproducible — the DOM
+    puts inline links (@mentions, hashtags, t.co) on their own text nodes, so a bio
+    that reads `for @Foo. Ex Head of ...` is stored with newlines around the mention.
+    Ignoring whitespace keeps the check on what it is actually for: the quote's
+    characters, in order, must exist in the text the model was shown. Paraphrases,
+    invented quotes, and quotes stitched together across an ellipsis still fail.
+    """
+    return re.sub(r"\s+", "", s).lower()
 
 
 def guard(raw: str, inp: AgentInput, *, rule_says_spam: bool | None = None, threshold: float = 0.7) -> Verdict:

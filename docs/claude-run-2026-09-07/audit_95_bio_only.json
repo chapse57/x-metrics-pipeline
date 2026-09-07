@@ -1,0 +1,14 @@
+{
+  "attempts": 95,
+  "by_verdict": {
+    "accepted": 72,
+    "review": 23
+  },
+  "guardrail_fired": {
+    "confidence": 16,
+    "rule_conflict": 7
+  },
+  "classifiers": {
+    "claude:claude-haiku-4-5-20251001": 95
+  }
+}

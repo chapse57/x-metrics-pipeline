@@ -11,3 +11,4 @@ out/
 *.webm
 xmetrics.egg-info/
 docs/recording/
+.env

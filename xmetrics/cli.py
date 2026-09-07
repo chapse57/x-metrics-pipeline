@@ -183,7 +183,7 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--record", metavar="DIR", help="record the browser session as .webm into DIR (evidence / demo GIF)")
     s.set_defaults(fn=cmd_collect)
 
-    s = sub.add_parser("classify"); s.add_argument("--claude", action="store_true"); s.add_argument("--model", default="claude-sonnet-4-5")
+    s = sub.add_parser("classify"); s.add_argument("--claude", action="store_true"); s.add_argument("--model", default="claude-haiku-4-5-20251001")
     s.add_argument("--threshold", type=float, default=0.7); s.add_argument("--force", action="store_true")
     s.add_argument("--dry-run", action="store_true", help="log to agent_audit only; never overwrite niches"); s.set_defaults(fn=cmd_classify)
 

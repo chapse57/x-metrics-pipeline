@@ -12,6 +12,27 @@ Sister project: [data-refinery](https://github.com/chapse57/data-refinery) — t
 
 ![dashboard](docs/dashboard.png)
 
+## What you get
+
+```
+influencers.csv        17 columns, one row per account
+dashboard.html         one file — search, filter, sort, scatter. No install, no login.
+validation_report.md   every check that ran, and what it found
+agent_audit.json       every model call: verdict + which check fired
+```
+
+| | columns |
+|---|---|
+| identity | Handle · Profile Link · Bio Contact |
+| size | Followers · Tier |
+| engagement | Engagement Rate · Views-to-Followers · Median Likes / Replies / Reposts / Views |
+| provenance | Posts Measured · Date Range Measured |
+| judgement | Niche · Hook Link · Hook Note · Why This Account Fits |
+
+**Every rate is recomputed from the raw counts and compared to the number being delivered.** Rows that do not reconcile are excluded from the CSV; borderline rows ship flagged, never silently. Engagement is a median over the last N *original* posts — reposts and pinned posts are out of the sample. Each account carries one line saying why it fits, and a link to the post that line came from.
+
+Last run: 95 rows checked, 0 errors, 2 warnings (two accounts sharing one bio URL — same firm, both legitimate).
+
 ## What it does
 
 ```
@@ -28,7 +49,7 @@ session      + audit   + review     + report     validation_report.md
 | **parse** (`parse.py`) | Formats captured live (`fixtures/aria_samples.json`). X omits zero-valued fields (`"13 likes, 1157 views"`), so absence is recorded as *absent*, never assumed. Markup change → `ParseError`, never a silent 0. |
 | **metrics** (`metrics.py`) | Pure functions. Engagement % = median over the last N original posts of (likes+replies+reposts) ÷ followers. Views/followers %. Tier. Days since last post. Everything re-computable from stored posts. |
 | **store** (`store.py`) | SQLite: `accounts`, `runs`, `measurements`, `posts`, `agent_audit`. Idempotent upserts; re-running a week overwrites, never duplicates. |
-| **classify** (`agent.py`) | Claude proposes niche / spam / confidence / **verbatim evidence quotes**. Output goes through `guard()` — see below. Offline `RuleClassifier` keeps the pipeline runnable without a key. |
+| **classify** (`agent.py`) | Claude proposes niche / spam / confidence / **verbatim evidence quotes**. Output goes through `guard()` — see below. Model id is a flag (`--model`); the offline `RuleClassifier` keeps the pipeline runnable without a key. |
 | **validate** (`validate.py`) | Recompute every rate from raw data and compare; min posts; recency; contact present; duplicate bio URLs; cross-check against an external sheet. `error` rows are excluded from the deliverable, `warn` rows are delivered flagged. |
 | **export** (`export.py`) | Client CSV (same columns as the hand-made sheet) + `dashboard.html` (no dependencies, opens from disk: search, niche/tier filters, engagement slider, sortable table, followers-vs-engagement scatter, per-account detail). |
 | **schedule** | `.github/workflows/weekly.yml` (validate is `--strict`: a failed check fails the job) and `n8n/x-metrics-weekly.json` for teams on n8n. Optional Slack summary. |
@@ -44,16 +65,28 @@ The model never writes to the deliverable. Every answer passes `guard()`:
 | `label_set` | invented categories ("Quant futures educator") — labels must come from a closed set | rejected |
 | `evidence` | **hallucinated justification**: every evidence quote must be a verbatim substring of the bio/posts the model was shown | rejected |
 | `confidence` | below threshold (0.7) | review queue (a human decides) |
-| `rule_conflict` | model and the rule-based spam screen disagree | review queue |
+| `rule_conflict` | model and a five-pattern keyword screen disagree | review queue |
 
-Every attempt is logged to `agent_audit` with the raw output and which checks fired. `out/agent_audit.json` from the current dataset (95 accounts, offline rule classifier, bio-only input):
+Every attempt is logged to `agent_audit` with the raw output and which checks fired. Two runs against `claude-haiku-4-5-20251001` (2026-09-07) — the input matters more than the model does:
 
-```json
-{"attempts": 95, "by_verdict": {"accepted": 23, "review": 32, "rejected": 40},
- "guardrail_fired": {"evidence": 40, "confidence": 72}}
-```
+| input | accepted | review | rejected | checks fired |
+|---|---|---|---|---|
+| 95 accounts, bio only | 72 | 23 | 0 | `confidence` 16, `rule_conflict` 7 |
+| 3 accounts, bio + 20 posts each | 2 | 0 | 1 | `evidence` 1 |
 
-Read: with only a bio to go on, the classifier could ground a label for 23 accounts; 72 answers were too uncertain for a client sheet and 40 could not cite evidence at all — so they never reached the client. Feed it post texts (the collector stores them) and the accepted share rises; the guardrail stays the same.
+A one-line bio gives the model almost nothing to quote, so `evidence` has little to bite on. What thin input produces instead is uncertainty — and 23 accounts went to a human rather than into the sheet. Give the model the actual posts and `evidence` starts working:
+
+### What it caught
+
+| | |
+|---|---|
+| the model's quote | `"Short from imbalance, post prior day high sweep. Scales at VWAP, -50% OR extension... Net +2R"` |
+| the actual post | `"…-50% OR extension, and wanted opposite side for imbalance to imbalance as ES made the move, but NQ decided to come trail me out at mid range of OR. Net +2R"` |
+| the difference | 20 words hidden behind `...` — the part where the trade went against him |
+| the model's confidence | **0.92** |
+| verdict | **rejected — it never reached the sheet** |
+
+Confidence would have shipped it. The full answer, and the second error inside it, are in [In detail](#in-detail) at the bottom.
 
 `tests/test_agent_guardrails.py` feeds deliberately wrong model outputs (invented category, plausible-but-fabricated quote, paraphrased quote, low confidence, fence-wrapped JSON, prose) and asserts each is caught without the model's cooperation.
 
@@ -76,7 +109,7 @@ Files in that folder are the untouched outputs of that run: `terminal.log`, `inf
 | @ProbableChris | 7,681 · 0.70% · 60.1% | 7,682 · 0.72% · 58.7% |
 
 Differences are one day of new posts shifting the 20-post window, plus the per-post-median definition (Design notes).
-Classification with bio + 20 post texts: 3/3 accepted (every evidence quote verbatim). Validation: 0 errors.
+Classification of those 3 accounts with bio + 20 post texts (Claude): 2 accepted, 1 rejected by `evidence` — the case above. Validation: 0 errors.
 
 ![collector reading a logged-in timeline](docs/collect.gif)
 
@@ -126,6 +159,41 @@ python -m xmetrics.cli --db out/x.db run --out out --strict
 - **Sum of medians vs median of sums.** The hand-made sheet used Σmedian(likes, replies, reposts)/followers. The pipeline computes median(likes+replies+reposts) per post — the statistically honest one. Legacy rows keep their definition so validation compares like with like; the difference is documented in `metrics.py`.
 - **Fail loudly.** Markup drift raises; validation errors exclude rows and (with `--strict`) fail CI. A tool that quietly gives wrong numbers is worse than no tool.
 - **Boring things done right.** Retries with backoff, jittered rate limiting, idempotent writes, resumable runs, audit table, evidence stored beside every number.
+
+## In detail
+
+For readers who want the whole answer rather than the summary.
+
+### The rejected answer, in full
+
+`claude-haiku-4-5-20251001`, @ProbableChris, bio + 20 posts:
+
+```json
+{"niche": "Day trading (stocks)", "is_spam": false, "confidence": 0.92,
+ "evidence": [
+   "I trade $NQ using statistical models, probabilistic frameworks, and custom tools built based on my market perspective.",
+   "1:1 scalps after the NY equity open have been doing ok, because that is the bulk of opportunity that exists in these tight open ranges.",
+   "Short from imbalance, post prior day high sweep. Scales at VWAP, -50% OR extension... Net +2R"],
+ "fit_note": "Experienced NQ day trader sharing genuine setups, trade analysis, and statistical frameworks."}
+```
+
+The first two quotes are verbatim. The third is two ends of one post joined by an ellipsis, with the middle — where the trade went against him — removed. `evidence` rejected the answer.
+
+**There is a second error in there, and the guardrail does not catch it.** `$NQ` is Nasdaq futures, not stocks, so `"Day trading (stocks)"` is the wrong label. That error passes every check: the label is inside the closed set, and the model's own confidence was 0.92. It happened to be discarded because the same answer failed on evidence. A check the model does not participate in is the only reason either problem stopped here.
+
+Re-running the same account reproduces the same stitched quote, so this is a repeatable failure mode rather than a one-off.
+
+### When two signals disagree
+
+All 7 `rule_conflict` rows in the 95-account run point the same way: the model called the account a signal-seller, the keyword screen did not. All 7 arrived at confidence 0.85–0.95, so no confidence threshold would have caught them.
+
+The model is not simply right here. Some calls are sound — `"Free + Premium Discord in Bio"`, `"SPX/SPY timing signals"`, `"Subscribe to my real time alerts"` are all things the five patterns miss, because they look for `join my discord` and `dm for signals`. Others overreach: one account was flagged for having a website in its bio, another for linking a prop-firm affiliate code.
+
+So neither side wins automatically. All 7 go to a human queue, and the deliverable says nothing about them until someone looks. The point is not that the model was right. It is that **two independent signals disagreeing is information the model's own confidence does not contain.**
+
+### Why the keyword screen stays small
+
+It is five regexes, and that is deliberate. Its job is not to detect spam well; its job is to be an opinion the model cannot influence. Grow it toward the model's judgement and it stops being independent, which is the only property that makes `rule_conflict` mean anything.
 
 ## Layout
 
