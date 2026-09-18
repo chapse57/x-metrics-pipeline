@@ -1,13 +1,18 @@
-# Weekly re-measure + validate + export. Idempotent: re-running the same week
+# Weekly re-measure + validate + export + diff. Idempotent: re-running the same week
 # overwrites the same run's rows, never duplicates them.
 #
 # Collection needs a logged-in X profile, which does not belong in CI. Two ways to run this:
 #   1. self-hosted runner on the machine that holds the Playwright profile (recommended), or
 #   2. keep collection local/cron and let CI only validate + export what was pushed.
+# Without a pushed data/xmetrics.db, CI seeds the DB from the 2026-09 deliverable in fixtures/
+# so validate/export/diff always run against real rows, never an empty file.
 name: weekly-metrics
 on:
   schedule:
     - cron: "0 22 * * 0"   # Sunday 22:00 UTC = Monday 07:00 KST
+  push:
+    branches: [main]
+    paths: [".github/workflows/weekly.yml", "xmetrics/**", "tests/**", "fixtures/**", "pyproject.toml"]
   workflow_dispatch:
     inputs:
       collect:
@@ -20,26 +25,37 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
+        with:
+          python-version: "3.12"
       - run: pip install -e .[dev]
       - run: python -m pytest -q
+      - name: seed DB from the real 2026-09 deliverable when no DB was pushed
+        run: |
+          if [ ! -f data/xmetrics.db ]; then
+            python -m xmetrics.cli --db data/xmetrics.db import-legacy fixtures/legacy_m2_results.jsonl --screened fixtures/legacy_screened_out.csv
+          fi
       - name: collect (self-hosted only)
         if: ${{ github.event.inputs.collect == 'true' }}
+        env:
+          XMETRICS_PROFILE: ${{ vars.XMETRICS_PROFILE }}
         run: python -m xmetrics.cli --db data/xmetrics.db collect --profile "$XMETRICS_PROFILE" --headless
-        env: { XMETRICS_PROFILE: ${{ vars.XMETRICS_PROFILE }} }
       - name: classify with guardrails (falls back to rule classifier without a key)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           if [ -n "$ANTHROPIC_API_KEY" ]; then python -m xmetrics.cli --db data/xmetrics.db classify --claude; else python -m xmetrics.cli --db data/xmetrics.db classify; fi
-        env: { ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }} }
-      - name: validate (fail the job on errors) + export
-        run: python -m xmetrics.cli --db data/xmetrics.db run --out out --strict
+      - name: validate against the hand-made sheet (fail the job on errors) + export
+        run: python -m xmetrics.cli --db data/xmetrics.db run --out out --strict --csv fixtures/legacy_master.csv
       - name: what changed since last week
         run: python -m xmetrics.cli --db data/xmetrics.db diff --out out
       - uses: actions/upload-artifact@v4
-        with: { name: deliverable, path: out/ }
+        with:
+          name: deliverable
+          path: out/
       - name: Slack summary (optional)
-        if: ${{ env.SLACK_WEBHOOK != '' }}
-        env: { SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }} }
+        if: ${{ secrets.SLACK_WEBHOOK != '' }}
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
         run: |
           python - <<'PY'
           import json, os, urllib.request
