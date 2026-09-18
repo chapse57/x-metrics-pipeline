@@ -22,6 +22,10 @@ jobs:
   metrics:
     runs-on: ${{ github.event.inputs.collect == 'true' && 'self-hosted' || 'ubuntu-latest' }}
     timeout-minutes: 90
+    env:
+      # job-level so a step's `if` can see it (a step's own env is not visible in its own `if`,
+      # and the secrets context is not allowed in a step `if` at all)
+      SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -53,9 +57,7 @@ jobs:
           name: deliverable
           path: out/
       - name: Slack summary (optional)
-        if: ${{ secrets.SLACK_WEBHOOK != '' }}
-        env:
-          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+        if: ${{ env.SLACK_WEBHOOK != '' }}
         run: |
           python - <<'PY'
           import json, os, urllib.request
