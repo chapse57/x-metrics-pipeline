@@ -95,24 +95,28 @@ Confidence would have shipped it. The full answer, and the second error inside i
 ## What changed since last week
 
 One measurement says what an account is like. Two say what moved — which is the question a
-weekly retainer actually pays for. `diff` compares the latest run with the one before it:
+weekly retainer actually pays for. `diff` compares the latest run with the one before it.
+
+First real pair, the 3 accounts of the 2026-09-06 live run re-measured on 2026-09-18 (12 days, 32 s;
+untouched outputs in `docs/live-run-2026-09-18/`):
 
 ```
 $ python -m xmetrics.cli --db out/x.db diff --out out
-changes since 20260907T…-playwright → 20260914T…-playwright: 2 flagged | 1 new | 1 dropped | 2 unchanged of 6
-  @growing   followers_up, tier_change
-  @fading    engagement_down, went_silent
+changes since 20260906T031921Z-playwright → 20260918T020745Z-playwright: 2 flagged | 0 new | 0 dropped | 1 unchanged of 3
+  @realFatCat1          views_up
+  @merrittblack         went_silent
 ```
 
-`changes.md` from that comparison (this pair comes from `tests/test_diff.py`, not a live measurement — the
-live 2026-09-06 run has no second week yet):
+| handle | flags | followers | engagement | views/followers | last post (days) |
+|---|---|---|---|---|---|
+| @realFatCat1 | views_up | 3,143 → 3,259 (+3.7%) | 0.75% → 0.84% (+0.10 pp) | 41.6% → 54.1% (+30.1%) | 2 → 0 |
+| @merrittblack | went_silent | 18,900 → 19,000 (+0.5%) | 0.26% → 0.27% (+0.00 pp) | 23.8% → 24.3% (+1.9%) | 5 → 17 |
+| @ProbableChris | — | 7,681 → 7,757 (+1.0%) | 0.70% → 0.59% (−0.11 pp) | 60.1% → 51.7% (−14%) | within thresholds |
 
-| handle | flags | followers | engagement | last post (days) |
-|---|---|---|---|---|
-| @growing | followers_up, tier_change | 24,000 → 26,000 (+8.3%) (Micro → Mid) | 1.00% → 1.00% | 1 → 1 |
-| @fading | engagement_down, went_silent | 10,000 → 10,000 | 1.00% → 0.50% (−0.50 pp) | 3 → 20 |
-
-then *New this run*, *Not measured this run*, and *Within thresholds* (every other delta, unflagged but shown).
+Read it the way a client would: one account's reach jumped a third while its follower count barely moved
+(worth a look — a post took off), one account stopped posting (17 days; drop it from an outreach list until it
+is back), and one drifted down on every rate but not enough to act on. `@realFatCat1`'s +3.7 % followers is
+reported but *not* flagged — under the 5 % line on purpose.
 
 Two rules keep the flags honest. A relative move on a tiny base is not a flag: engagement has to move by at
 least 0.2 percentage points *and* 25 % — `0.30 % → 0.42 %` is +40 % and still not flagged. And a tier crossing

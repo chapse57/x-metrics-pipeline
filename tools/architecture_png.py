@@ -84,7 +84,7 @@ def main(out: Path = Path("docs/architecture.png")) -> Path:
                           "validate: 0 errors · 53 tests passing",
                           "weekly GitHub Actions: tests → validate → export → diff",
                           "MCP server · n8n workflow",
-                          "diff: second week not measured yet — README example is the test fixture"],
+                          "diff 09-06 → 09-18 (same 3 accounts): 2 flagged — views_up, went_silent · 1 within thresholds"],
           font(14), fill=MUTED, gap=5)
 
     # ---- bottom-middle: guard panel
