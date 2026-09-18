@@ -1,0 +1,84 @@
+{
+  "run_prev": "20260906T031921Z-playwright",
+  "run_now": "20260918T020745Z-playwright",
+  "summary": "changes since 20260906T031921Z-playwright → 20260918T020745Z-playwright: 2 flagged | 0 new | 0 dropped | 1 unchanged of 3",
+  "counts": {
+    "flagged": 2,
+    "new": 0,
+    "dropped": 0,
+    "unchanged": 1,
+    "total": 3
+  },
+  "changes": [
+    {
+      "handle": "realfatcat1",
+      "display": "realFatCat1",
+      "kind": "changed",
+      "flags": [
+        "views_up"
+      ],
+      "followers_prev": 3143,
+      "followers_now": 3259,
+      "followers_delta": 116,
+      "followers_delta_pct": 3.69,
+      "engagement_prev": 0.7477,
+      "engagement_now": 0.8438,
+      "engagement_delta_pp": 0.0961,
+      "views_prev": 41.5845,
+      "views_now": 54.1117,
+      "views_delta_pct": 30.12,
+      "tier_prev": "Micro (<25K)",
+      "tier_now": "Micro (<25K)",
+      "days_since_last_post_prev": 2,
+      "days_since_last_post_now": 0,
+      "posts_measured_prev": 20,
+      "posts_measured_now": 20
+    },
+    {
+      "handle": "merrittblack",
+      "display": "merrittblack",
+      "kind": "changed",
+      "flags": [
+        "went_silent"
+      ],
+      "followers_prev": 18900,
+      "followers_now": 19000,
+      "followers_delta": 100,
+      "followers_delta_pct": 0.53,
+      "engagement_prev": 0.2646,
+      "engagement_now": 0.2684,
+      "engagement_delta_pp": 0.0038,
+      "views_prev": 23.8175,
+      "views_now": 24.2684,
+      "views_delta_pct": 1.89,
+      "tier_prev": "Micro (<25K)",
+      "tier_now": "Micro (<25K)",
+      "days_since_last_post_prev": 5,
+      "days_since_last_post_now": 17,
+      "posts_measured_prev": 20,
+      "posts_measured_now": 20
+    },
+    {
+      "handle": "probablechris",
+      "display": "ProbableChris",
+      "kind": "changed",
+      "flags": [],
+      "followers_prev": 7681,
+      "followers_now": 7757,
+      "followers_delta": 76,
+      "followers_delta_pct": 0.99,
+      "engagement_prev": 0.6965,
+      "engagement_now": 0.5866,
+      "engagement_delta_pp": -0.1099,
+      "views_prev": 60.1094,
+      "views_now": 51.6888,
+      "views_delta_pct": -14.01,
+      "tier_prev": "Micro (<25K)",
+      "tier_now": "Micro (<25K)",
+      "days_since_last_post_prev": 3,
+      "days_since_last_post_now": 6,
+      "posts_measured_prev": 20,
+      "posts_measured_now": 20
+    }
+  ]
+}
