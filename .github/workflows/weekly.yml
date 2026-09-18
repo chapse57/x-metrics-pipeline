@@ -33,6 +33,8 @@ jobs:
         env: { ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }} }
       - name: validate (fail the job on errors) + export
         run: python -m xmetrics.cli --db data/xmetrics.db run --out out --strict
+      - name: what changed since last week
+        run: python -m xmetrics.cli --db data/xmetrics.db diff --out out
       - uses: actions/upload-artifact@v4
         with: { name: deliverable, path: out/ }
       - name: Slack summary (optional)
@@ -43,7 +45,10 @@ jobs:
           import json, os, urllib.request
           rep = open("out/validation_report.md", encoding="utf-8").read().splitlines()[1]
           audit = json.load(open("out/agent_audit.json"))
-          msg = f"x-metrics weekly: {rep}\nagent: {audit['by_verdict']} guardrails fired: {audit['guardrail_fired']}"
+          ch = json.load(open("out/changes.json"))
+          flagged = [f"@{c['display']}: {', '.join(c['flags'])}" for c in ch["changes"] if c["flags"]][:10]
+          msg = (f"x-metrics weekly: {rep}\n{ch['summary']}\n" + ("\n".join(flagged) + "\n" if flagged else "")
+                 + f"agent: {audit['by_verdict']} guardrails fired: {audit['guardrail_fired']}")
           req = urllib.request.Request(os.environ["SLACK_WEBHOOK"], data=json.dumps({"text": msg}).encode(), headers={"Content-Type": "application/json"})
           urllib.request.urlopen(req, timeout=20)
           PY

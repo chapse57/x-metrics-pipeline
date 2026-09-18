@@ -141,9 +141,15 @@ class Store:
 
     # ---- runs -----------------------------------------------------------
     def start_run(self, source: str, note: str | None = None) -> str:
-        run_id = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + source
+        base = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + source
+        run_id, n = base, 1
         with self.tx() as c:
-            c.execute("INSERT OR IGNORE INTO runs (run_id, started_at, source, note) VALUES (?,?,?,?)",
+            # run ids have second resolution; two runs started inside the same second must not
+            # silently share one id (INSERT OR IGNORE used to do exactly that)
+            while c.execute("SELECT 1 FROM runs WHERE run_id=?", (run_id,)).fetchone():
+                n += 1
+                run_id = f"{base}-{n}"
+            c.execute("INSERT INTO runs (run_id, started_at, source, note) VALUES (?,?,?,?)",
                       (run_id, utcnow(), source, note))
         return run_id
 

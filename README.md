@@ -19,6 +19,7 @@ influencers.csv        17 columns, one row per account
 dashboard.html         one file — search, filter, sort, scatter. No install, no login.
 validation_report.md   every check that ran, and what it found
 agent_audit.json       every model call: verdict + which check fired
+changes.md / .json     what moved since the previous run: flagged · new · dropped · within thresholds
 ```
 
 | | columns |
@@ -36,11 +37,11 @@ Last run: 95 rows checked, 0 errors, 2 warnings (two accounts sharing one bio UR
 ## What it does
 
 ```
-collect ──▶ store ──▶ classify ──▶ validate ──▶ export
-Playwright   SQLite    Claude +     recompute    CSV
-logged-in    4 tables  guardrails   + rules      dashboard.html
-session      + audit   + review     + report     validation_report.md
-                       queue                     agent_audit.json
+collect ──▶ store ──▶ classify ──▶ validate ──▶ export ──▶ diff
+Playwright   SQLite    Claude +     recompute    CSV          this run vs
+logged-in    4 tables  guardrails   + rules      dashboard    the previous one:
+session      + audit   + review     + report     validation   changes.md
+                       queue                     agent_audit  changes.json
 ```
 
 | stage | what it guarantees |
@@ -52,7 +53,8 @@ session      + audit   + review     + report     validation_report.md
 | **classify** (`agent.py`) | Claude proposes niche / spam / confidence / **verbatim evidence quotes**. Output goes through `guard()` — see below. Model id is a flag (`--model`); the offline `RuleClassifier` keeps the pipeline runnable without a key. |
 | **validate** (`validate.py`) | Recompute every rate from raw data and compare; min posts; recency; contact present; duplicate bio URLs; cross-check against an external sheet. `error` rows are excluded from the deliverable, `warn` rows are delivered flagged. |
 | **export** (`export.py`) | Client CSV (same columns as the hand-made sheet) + `dashboard.html` (no dependencies, opens from disk: search, niche/tier filters, engagement slider, sortable table, followers-vs-engagement scatter, per-account detail). |
-| **schedule** | `.github/workflows/weekly.yml` (validate is `--strict`: a failed check fails the job) and `n8n/x-metrics-weekly.json` for teams on n8n. Optional Slack summary. |
+| **diff** (`diff.py`) | Compares the two most recent runs per account (or any two by id). Followers, engagement, views/followers, tier, days-since-last-post — every delta reported; a change is *flagged* only past a threshold (`--followers-pct 5`, `--engagement-pp 0.2`, `--views-pct 25`, `--silent-days 14`). Accounts that appear or disappear between runs are listed separately. `--fail-on-flags` lets a scheduler page someone only when something moved. Deltas are computed from stored rows, never estimated. |
+| **schedule** | `.github/workflows/weekly.yml` (validate is `--strict`: a failed check fails the job; `diff` runs after export and the Slack summary leads with what changed) and `n8n/x-metrics-weekly.json` for teams on n8n. |
 | **MCP** (`mcp_server.py`) | Read-only MCP server so Claude can query the dataset: `search_accounts`, `account`, `validation_summary`, `agent_audit`. |
 
 ## The guardrail — what the agent gets wrong, and what catches it
@@ -90,6 +92,33 @@ Confidence would have shipped it. The full answer, and the second error inside i
 
 `tests/test_agent_guardrails.py` feeds deliberately wrong model outputs (invented category, plausible-but-fabricated quote, paraphrased quote, low confidence, fence-wrapped JSON, prose) and asserts each is caught without the model's cooperation.
 
+## What changed since last week
+
+One measurement says what an account is like. Two say what moved — which is the question a
+weekly retainer actually pays for. `diff` compares the latest run with the one before it:
+
+```
+$ python -m xmetrics.cli --db out/x.db diff --out out
+changes since 20260907T…-playwright → 20260914T…-playwright: 2 flagged | 1 new | 1 dropped | 2 unchanged of 6
+  @growing   followers_up, tier_change
+  @fading    engagement_down, went_silent
+```
+
+`changes.md` from that comparison (this pair comes from `tests/test_diff.py`, not a live measurement — the
+live 2026-09-06 run has no second week yet):
+
+| handle | flags | followers | engagement | last post (days) |
+|---|---|---|---|---|
+| @growing | followers_up, tier_change | 24,000 → 26,000 (+8.3%) (Micro → Mid) | 1.00% → 1.00% | 1 → 1 |
+| @fading | engagement_down, went_silent | 10,000 → 10,000 | 1.00% → 0.50% (−0.50 pp) | 3 → 20 |
+
+then *New this run*, *Not measured this run*, and *Within thresholds* (every other delta, unflagged but shown).
+
+Two rules keep the flags honest. A relative move on a tiny base is not a flag: engagement has to move by at
+least 0.2 percentage points *and* 25 % — `0.30 % → 0.42 %` is +40 % and still not flagged. And a tier crossing
+is a fact, not a threshold: it stays flagged however loose you set the numbers. `tests/test_diff.py` puts a
+row on each side of every line.
+
 ## Live run (2026-09-06, Windows, logged-in session) — evidence in `docs/live-run-2026-09-06/`
 
 | | |
@@ -121,7 +150,7 @@ The GIF is that run, recorded by the collector itself (`collect --record docs/re
 
 ```
 $ python -m pytest -q
-46 passed
+53 passed
 $ python -m xmetrics.cli --db out/x.db import-legacy fixtures/legacy_m2_results.jsonl
 imported: 95 accounts (53 screened out)
 $ python -m xmetrics.cli --db out/x.db validate --csv fixtures/legacy_master.csv
@@ -151,6 +180,9 @@ python -m xmetrics.cli --db out/x.db classify --claude
 # 4. validate + export
 python -m xmetrics.cli --db out/x.db run --out out --strict
 # -> out/influencers.csv  out/dashboard.html  out/validation_report.md  out/agent_audit.json
+
+# 5. next week, after another collect: what moved?
+python -m xmetrics.cli --db out/x.db diff --out out            # -> out/changes.md  out/changes.json
 ```
 
 ## Design notes
@@ -198,8 +230,8 @@ It is five regexes, and that is deliberate. Its job is not to detect spam well; 
 ## Layout
 
 ```
-xmetrics/   parse · metrics · store · legacy · validate · agent · export · collect · cli
-tests/      46 tests (parser formats, metrics, legacy cross-check, guardrails)
+xmetrics/   parse · metrics · store · legacy · validate · agent · export · diff · collect · cli
+tests/      53 tests (parser formats, metrics, legacy cross-check, guardrails, diff thresholds)
 fixtures/   captured aria-labels + the real 2026-09 deliverable
 out/        generated: CSV, dashboard, validation report, agent audit
 mcp_server.py  ·  n8n/  ·  .github/workflows/weekly.yml

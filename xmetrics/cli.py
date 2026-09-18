@@ -6,6 +6,7 @@
   xmetrics validate       --db out/xmetrics.db [--csv master.csv]
   xmetrics export         --db out/xmetrics.db --out out/
   xmetrics run            --db out/xmetrics.db --out out/          # validate + export (the weekly job)
+  xmetrics diff           --db out/xmetrics.db --out out/          # what changed since the previous run
 """
 from __future__ import annotations
 
@@ -16,6 +17,7 @@ import sys
 from pathlib import Path
 
 from . import agent as ag
+from . import diff as df
 from .export import rows_for_export, write_csv, write_dashboard
 from .legacy import import_jsonl
 from .store import Store
@@ -164,6 +166,23 @@ def cmd_run(args) -> int:
     return rc or cmd_export(args)
 
 
+def cmd_diff(args) -> int:
+    """Compare the two most recent runs (or --prev/--now) and write changes.md + changes.json.
+    Exit 0 always unless --fail-on-flags: then a non-empty flagged list fails the job, so a
+    scheduler can page someone only when something actually moved."""
+    st = _store(args)
+    th = df.Thresholds(followers_pct=args.followers_pct, engagement_pp=args.engagement_pp,
+                       engagement_rel_pct=args.engagement_rel_pct, views_rel_pct=args.views_pct,
+                       silent_days=args.silent_days)
+    res = df.compare(st, run_prev=args.prev, run_now=args.now, th=th)
+    paths = df.write_outputs(res, args.out)
+    print(df.summary_line(res))
+    for c in res.flagged:
+        print(f"  @{c.display:<20} {', '.join(c.flags)}")
+    print(f"wrote {paths['md']}\nwrote {paths['json']}")
+    return 1 if args.fail_on_flags and res.flagged else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     p = argparse.ArgumentParser(prog="xmetrics")
@@ -190,6 +209,17 @@ def main(argv: list[str] | None = None) -> int:
     for name, fn in (("validate", cmd_validate), ("export", cmd_export), ("run", cmd_run)):
         s = sub.add_parser(name); s.add_argument("--out", default="out"); s.add_argument("--csv")
         s.add_argument("--strict", action="store_true"); s.add_argument("--title", default="X influencer metrics"); s.set_defaults(fn=fn)
+
+    s = sub.add_parser("diff", help="what changed since the previous run"); s.add_argument("--out", default="out")
+    s.add_argument("--prev", help="run id to compare from (default: the run before --now)")
+    s.add_argument("--now", help="run id to compare to (default: most recent run with measurements)")
+    s.add_argument("--followers-pct", type=float, default=5.0, help="flag |Δfollowers| >= this %% (default 5)")
+    s.add_argument("--engagement-pp", type=float, default=0.2, help="flag |Δengagement| >= this many percentage points (default 0.2)")
+    s.add_argument("--engagement-rel-pct", type=float, default=25.0, help="...and >= this %% relative (default 25)")
+    s.add_argument("--views-pct", type=float, default=25.0, help="flag |Δviews/followers| >= this %% relative (default 25)")
+    s.add_argument("--silent-days", type=int, default=14, help="crossing this many days since last post = went_silent (default 14)")
+    s.add_argument("--fail-on-flags", action="store_true", help="exit 1 if anything was flagged (for schedulers)")
+    s.set_defaults(fn=cmd_diff)
 
     args = p.parse_args(argv)
     return args.fn(args)
