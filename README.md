@@ -123,6 +123,19 @@ least 0.2 percentage points *and* 25 % — `0.30 % → 0.42 %` is +40 % and stil
 is a fact, not a threshold: it stays flagged however loose you set the numbers. `tests/test_diff.py` puts a
 row on each side of every line.
 
+One more rule, about rounding, because the same deltas are about to be computed a second time in SQL
+(`mart.v_changes`, PostgreSQL) and asserted equal to this module's output. Python's `round()` is
+half-to-even on the binary value: `round(0.125, 2)` is `0.12`, `round(2.675, 2)` is `2.67`. PostgreSQL's
+`round(x::numeric, 2)` is half away from zero on the shortest decimal form: `0.13` and `2.68`. X shows
+follower counts rounded to the hundred, so exact halves do occur: an account at 80,000 that gains 100 is
++0.125 %, and Python reports +0.12 while Postgres reports +0.13. Over a 10K–300K × ±5K grid of such
+counts the two rules disagree on 212 of 290,100 deltas (0.07 %) — rare, always by 0.01, and exactly the
+kind of mismatch that makes a client stop trusting both numbers. `diff._round`
+rounds Python's way out and Postgres's way in (`Decimal(repr(x)).quantize(..., ROUND_HALF_UP)`).
+Postgres's rule won because the dashboard reads the SQL side: whatever a client sees there is the
+number Python has to reproduce, not the reverse. `metrics.py` and `validate.py` still use the built-in
+`round` for the stored rates; they move to the same helper when the rates are recomputed in SQL.
+
 ## Live run (2026-09-06, Windows, logged-in session) — evidence in `docs/live-run-2026-09-06/`
 
 | | |
@@ -154,7 +167,7 @@ The GIF is that run, recorded by the collector itself (`collect --record docs/re
 
 ```
 $ python -m pytest -q
-53 passed
+54 passed
 $ python -m xmetrics.cli --db out/x.db import-legacy fixtures/legacy_m2_results.jsonl
 imported: 95 accounts (53 screened out)
 $ python -m xmetrics.cli --db out/x.db validate --csv fixtures/legacy_master.csv
@@ -235,7 +248,7 @@ It is five regexes, and that is deliberate. Its job is not to detect spam well; 
 
 ```
 xmetrics/   parse · metrics · store · legacy · validate · agent · export · diff · collect · cli
-tests/      53 tests (parser formats, metrics, legacy cross-check, guardrails, diff thresholds)
+tests/      54 test cases in 40 test functions, parametrize expanded (parser formats, metrics, legacy cross-check, guardrails, diff thresholds, rounding)
 fixtures/   captured aria-labels + the real 2026-09 deliverable
 out/        generated: CSV, dashboard, validation report, agent audit
 mcp_server.py  ·  n8n/  ·  .github/workflows/weekly.yml

@@ -18,6 +18,7 @@ import json
 import sqlite3
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
+from decimal import Decimal, ROUND_HALF_UP
 
 from .store import Store
 
@@ -102,8 +103,19 @@ def measurements_for_run(store: Store, run_id: str) -> dict[str, sqlite3.Row]:
 
 
 # ------------------------------------------------------------------------- compare --
+def _round(x: float, places: int) -> float:
+    """Round the way PostgreSQL's ``round(x::numeric, n)`` does: half away from zero, on the
+    shortest decimal form of the float. Python's built-in ``round`` is half-to-even on the binary
+    value (``round(0.125, 2) == 0.12``; Postgres says 0.13). The SQL view ``mart.v_changes``
+    recomputes every delta below, and the two are asserted equal — so both sides must round by
+    the same rule. Postgres's rule was chosen because the dashboard reads the SQL side: a client
+    checking a number sees the SQL answer, and Python must agree with it, not the other way round."""
+    q = Decimal(1).scaleb(-places)
+    return float(Decimal(repr(x)).quantize(q, rounding=ROUND_HALF_UP))
+
+
 def _rel(delta: float, base: float) -> float | None:
-    return round(delta / base * 100, 2) if base else None
+    return _round(delta / base * 100, 2) if base else None
 
 
 def compare_rows(prev: sqlite3.Row | None, now: sqlite3.Row | None, th: Thresholds = Thresholds()) -> Change:
@@ -124,7 +136,7 @@ def compare_rows(prev: sqlite3.Row | None, now: sqlite3.Row | None, th: Threshol
         followers_delta=now["followers"] - prev["followers"],
         followers_delta_pct=_rel(now["followers"] - prev["followers"], prev["followers"]),
         engagement_prev=prev["engagement_rate"], engagement_now=now["engagement_rate"],
-        engagement_delta_pp=round(now["engagement_rate"] - prev["engagement_rate"], 4),
+        engagement_delta_pp=_round(now["engagement_rate"] - prev["engagement_rate"], 4),
         views_prev=prev["views_to_followers"], views_now=now["views_to_followers"],
         views_delta_pct=_rel(now["views_to_followers"] - prev["views_to_followers"], prev["views_to_followers"]),
         tier_prev=prev["tier"], tier_now=now["tier"],

@@ -120,3 +120,12 @@ def test_cli_writes_files_and_fail_on_flags(two_runs, tmp_path, capsys):
     payload = json.loads((out / "changes.json").read_text(encoding="utf-8"))
     assert [c["flags"] for c in payload["changes"] if c["flags"]] == [["tier_change"]]
     assert "flagged" in capsys.readouterr().out
+
+def test_rounding_matches_postgres_half_away_from_zero():
+    """v_changes rounds with Postgres's round(numeric): half away from zero. Python's round() is
+    half-to-even on the binary value and would disagree on exactly these inputs."""
+    assert df._round(0.125, 2) == 0.13 and round(0.125, 2) == 0.12
+    assert df._round(-0.125, 2) == -0.13
+    assert df._round(2.675, 2) == 2.68 and round(2.675, 2) == 2.67
+    assert df._round(0.00005, 4) == 0.0001
+    assert df._rel(1, 8) == 12.5 and df._rel(1, 3) == 33.33
