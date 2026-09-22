@@ -1,0 +1,21 @@
+handle,followers_0907,tier_0907,engagement_0907,days_since_last_post_0907,posts_measured_0907,niche,why_selected
+merrittblack,18900,Micro (<25K),0.2698,7,17,Futures / order flow,live: already has 9/6 and 9/18 runs -> 3rd point
+probablechris,7682,Micro (<25K),0.7225,5,16,Futures / order flow,live: already has 9/6 and 9/18 runs -> 3rd point
+realfatcat1,3142,Micro (<25K),0.7002,4,20,Futures / order flow,live: already has 9/6 and 9/18 runs -> 3rd point
+frankcappelleri,24100,Micro (<25K),0.0809,3,20,Macro commentary,tier boundary 25K (+-5%) -> tier_change probe
+mendatrades,24200,Micro (<25K),0.095,3,17,Day trading (stocks),tier boundary 25K (+-5%) -> tier_change probe
+verniman,25100,Mid (25-100K),0.1056,3,20,Day trading (stocks),tier boundary 25K (+-5%) -> tier_change probe
+steenbab,97600,Mid (25-100K),0.0564,3,20,Trading psychology / education,tier boundary 100K (+-3%) -> tier_change probe
+triggertrades,98900,Mid (25-100K),0.1775,4,16,Index day/swing trading (SPX/NDX) - Elliott Wave signals,tier boundary 100K (+-3%) -> tier_change probe
+anthonycrudele,100100,Macro (100K+),0.048,5,15,Futures / order flow,tier boundary 100K (+-3%) -> tier_change probe
+damonpavlatos,29400,Mid (25-100K),0.148,13,20,Futures / order flow,days_since_last_post 10-13 -> went_silent probe (threshold 14)
+yuseftrades,5291,Micro (<25K),0.189,12,19,Swing trading (stocks),days_since_last_post 10-13 -> went_silent probe (threshold 14)
+brianleetrades,56500,Mid (25-100K),0.2,10,20,Day trading (small caps) education,days_since_last_post 10-13 -> went_silent probe (threshold 14)
+macrocharts,197000,Macro (100K+),0.0911,10,20,Macro commentary,days_since_last_post 10-13 -> went_silent probe (threshold 14)
+tradestl,18700,Micro (<25K),0.5187,17,15,Day trading (stocks),days_since_last_post 17 (already silent) -> active_again probe
+theorytrading,4396,Micro (<25K),0.7848,8,20,Other,top engagement (0.785) -> engagement_down probe (high rates are volatile)
+_amtrades,113800,Macro (100K+),0.7702,4,20,Day trading (index futures / price-action model) education,top engagement (0.770) -> engagement_down probe (high rates are volatile)
+scarfacetrades_,96100,Mid (25-100K),0.5697,3,14,Day trading (stocks),top engagement (0.570) -> engagement_down probe (high rates are volatile)
+jduntrades,147700,Macro (100K+),0.0078,3,14,Futures / order flow,bottom engagement (0.0078) -> 0.2pp threshold on tiny base
+theshortbear,205900,Macro (100K+),0.0087,3,20,"Swing / position trading (stocks), Market Wizards",bottom engagement (0.0087) -> 0.2pp threshold on tiny base
+yuriymatso,78400,Mid (25-100K),0.0612,3,20,Stocks / index technical analysis (SPY-QQQ-NDX charts),"control: median band, active, 20 posts -> expected unchanged/within thresholds"
