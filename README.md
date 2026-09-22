@@ -95,7 +95,19 @@ Confidence would have shipped it. The full answer, and the second error inside i
 ## What changed since last week
 
 One measurement says what an account is like. Two say what moved — which is the question a
-weekly retainer actually pays for. `diff` compares the latest run with the one before it.
+weekly retainer actually pays for. `diff` compares the latest run with what came before it, by one rule:
+
+> **Each account is compared with its own previous measurement, and an account counts as
+> "dropped" only when a run that was meant to cover it came back without it.**
+
+Not "this run vs the previous run". Runs do not all cover the same accounts — a weekly run may
+re-measure 20 of 95, a first live run was 3 — and comparing two runs as whole sets called 92 accounts
+"dropped" that nobody had dropped; they were not tried. So every run records its **scope**: `full` when
+it tried every tracked account (the first collection, `collect --all`, the legacy import), `partial` when
+it tried a named list. The collector decides that from what it is about to measure, not from a flag.
+After a partial run, accounts it did not try are simply not in the report; after a full run, a tracked
+account that came back empty is. `diff RUN_A RUN_B` with both runs named still compares exactly those
+two as whole sets, for when that is the question.
 
 First real pair, the 3 accounts of the 2026-09-06 live run re-measured on 2026-09-18 (12 days, 32 s;
 untouched outputs in `docs/live-run-2026-09-18/`):
@@ -135,6 +147,30 @@ rounds Python's way out and Postgres's way in (`Decimal(repr(x)).quantize(..., R
 Postgres's rule won because the dashboard reads the SQL side: whatever a client sees there is the
 number Python has to reproduce, not the reverse. `metrics.py` and `validate.py` still use the built-in
 `round` for the stored rates; they move to the same helper when the rates are recomputed in SQL.
+
+## The same numbers in PostgreSQL
+
+`pg/` puts the SQLite files into PostgreSQL so a dashboard can read them, in three schemas with one
+rule each: `raw` is the collector's rows column for column (nothing corrected — if a number is wrong here
+it was wrong at collection), `core` fixes types and makes one documented correction (the 2026-09 legacy
+import stamped every row with the import time; `core.measurements` re-dates those rows to their
+measurement window's end and keeps the original as `recorded_at`), and `mart` is what a dashboard reads:
+views and functions only, so nothing on a screen can be a number `raw` cannot reproduce.
+
+```
+docker compose -f pg/docker-compose.yml up -d                    # PostgreSQL 16 on localhost:5432
+set XMETRICS_PG_DSN=postgresql://xmetrics:xmetrics@localhost:5432/xmetrics
+python -m pg.migrate                                             # pg/schema/*.sql, each once, ledger in pg.schema_migrations
+python -m pg.load out/x_legacy_claude.db out/x.db                # idempotent: load twice, same rows
+python -m pytest tests/test_pg.py -q                             # skipped unless XMETRICS_PG_DSN is set
+```
+
+The change report is computed a second time in SQL — `mart.changes_since(run)` and `mart.changes(a, b)`
+are `diff.compare` line for line, and `mart.v_changes` is the latest run's report — and `tests/test_pg.py`
+asserts the SQL rows equal the Python rows, every column, for every run in the real database. That is
+the point of the layer: the dashboard and the weekly Slack line cannot disagree, because they are the
+same function. `mart.v_latest`, `mart.v_freshness` (how old each account's number is, so a card can turn
+red) and `mart.v_runs` (with scope) are the other three views a first dashboard needs.
 
 ## Live run (2026-09-06, Windows, logged-in session) — evidence in `docs/live-run-2026-09-06/`
 
@@ -198,7 +234,9 @@ python -m xmetrics.cli --db out/x.db classify --claude
 python -m xmetrics.cli --db out/x.db run --out out --strict
 # -> out/influencers.csv  out/dashboard.html  out/validation_report.md  out/agent_audit.json
 
-# 5. next week, after another collect: what moved?
+# 5. next week: re-measure and see what moved
+python -m xmetrics.cli --db out/x.db collect --all              # every tracked account (a full run) …
+python -m xmetrics.cli --db out/x.db collect handle1 handle2    # … or a named list (a partial run)
 python -m xmetrics.cli --db out/x.db diff --out out            # -> out/changes.md  out/changes.json
 ```
 
@@ -248,7 +286,8 @@ It is five regexes, and that is deliberate. Its job is not to detect spam well; 
 
 ```
 xmetrics/   parse · metrics · store · legacy · validate · agent · export · diff · collect · cli
-tests/      54 test cases in 40 test functions, parametrize expanded (parser formats, metrics, legacy cross-check, guardrails, diff thresholds, rounding)
+pg/         PostgreSQL: docker-compose · migrate (schema/001, 002) · load (SQLite -> raw) · raw / core / mart
+tests/      70 test cases in 56 test functions, parametrize expanded (parser formats, metrics, legacy cross-check, guardrails, diff rule + thresholds, rounding, SQL == Python)
 fixtures/   captured aria-labels + the real 2026-09 deliverable
 out/        generated: CSV, dashboard, validation report, agent audit
 mcp_server.py  ·  n8n/  ·  .github/workflows/weekly.yml

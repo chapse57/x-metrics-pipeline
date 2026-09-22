@@ -1,6 +1,7 @@
 """PostgreSQL layer: migration idempotence, load counts, reload invariance, and the one
-that matters — mart.changes() in SQL equals xmetrics.diff.compare() in Python, every row,
-every column, for every pair of runs in the real database.
+that matters — the change report computed in SQL (mart.changes, mart.changes_since,
+mart.v_changes) equals xmetrics.diff.compare() in Python, every row, every column, for
+every run in the real database.
 
 Needs a reachable PostgreSQL and XMETRICS_PG_DSN (any database; the raw/core/mart/pg
 schemas are dropped and rebuilt at the start of the session). Skipped otherwise, so the
@@ -13,7 +14,7 @@ from __future__ import annotations
 import os
 import random
 import sqlite3
-from dataclasses import asdict
+from dataclasses import asdict, fields
 from pathlib import Path
 
 import pytest
@@ -70,12 +71,14 @@ def conn():
 
 # ------------------------------------------------------------------ 1. migration --
 def test_migrate_is_idempotent(conn):
-    from pg.migrate import migrate
+    """A second migrate applies nothing and changes nothing; every file is in the ledger once."""
+    from pg.migrate import migrate, migration_files
     before = object_inventory(conn)
-    migrate(conn)
-    after = object_inventory(conn)
-    assert after == before
-    assert conn.execute("SELECT runs FROM pg.schema_migrations WHERE filename = '001_init.sql'").fetchone()[0] >= 2
+    assert migrate(conn) == []
+    assert object_inventory(conn) == before
+    ledger = conn.execute("SELECT filename, runs FROM pg.schema_migrations ORDER BY 1").fetchall()
+    assert ledger == [(p.name, 1) for p in migration_files()]
+    assert "002_run_scope.sql" in {f for f, _ in ledger}
 
 
 # ------------------------------------------------------------------ 2. load counts --
@@ -132,17 +135,32 @@ def test_load_single_run_only_touches_that_run(conn):
 
 
 # ------------------------------------------------ 4. SQL changes == Python changes --
-COLUMNS = ["handle", "display", "kind", "flags",
-           "followers_prev", "followers_now", "followers_delta", "followers_delta_pct",
-           "engagement_prev", "engagement_now", "engagement_delta_pp",
-           "views_prev", "views_now", "views_delta_pct", "tier_prev", "tier_now",
-           "days_since_last_post_prev", "days_since_last_post_now",
-           "posts_measured_prev", "posts_measured_now"]
+COLUMNS = [f.name for f in fields(df.Change)]     # mart.change is this dataclass, field for field
 
 
 def sql_changes(conn, run_prev: str, run_now: str) -> list[dict]:
     rows = conn.execute("SELECT * FROM mart.changes(%s, %s)", (run_prev, run_now)).fetchall()
     return [dict(zip(COLUMNS, r)) for r in rows]
+
+
+def merged_store(tmp_path) -> Store:
+    """One SQLite file holding every out/*.db, merged the way pg/load.py merges them (runs and
+    measurements keyed by run, accounts by handle with the newer updated_at winning), so Python
+    can compute the baseline report over the same data Postgres holds."""
+    st = Store(tmp_path / "merged.db")
+    rows = {t: [] for t in ("runs", "accounts", "measurements")}
+    for path in SQLITE_FILES:
+        src = Store(path)                       # opening upgrades an old file (adds runs.scope)
+        for t in rows:
+            rows[t] += [dict(r) for r in src.conn.execute(f"SELECT * FROM {t}")]
+        src.close()
+    rows["accounts"].sort(key=lambda a: a["updated_at"])
+    with st.tx() as c:
+        for t in ("runs", "accounts", "measurements"):
+            for r in rows[t]:
+                cols = ", ".join(r); marks = ", ".join("?" * len(r))
+                c.execute(f"INSERT OR REPLACE INTO {t} ({cols}) VALUES ({marks})", list(r.values()))
+    return st
 
 
 def python_changes(store: Store, run_prev: str, run_now: str) -> list[dict]:
@@ -189,13 +207,53 @@ def test_sql_changes_equal_python_changes_with_custom_thresholds(conn):
     assert any(r["flags"] for r in py), "thresholds this tight should flag something"
 
 
-def test_v_changes_is_the_latest_pair(conn):
-    prev, now = conn.execute(
-        "SELECT (SELECT run_id FROM mart.v_runs WHERE recency = 2), (SELECT run_id FROM mart.v_runs WHERE recency = 1)"
-    ).fetchone()
+@pytest.mark.skipif(not SQLITE_FILES, reason="no out/*.db to load")
+def test_sql_baseline_changes_equal_python_for_every_run(conn, tmp_path):
+    """The rule the dashboard reads — each account vs its own previous measurement, dropped only
+    after a full run — computed in SQL over the merged database equals Python over a merged copy."""
+    from pg.load import load
+    for path in SQLITE_FILES:
+        load(conn, path)
+    st = merged_store(tmp_path)
+    runs = df.runs_with_measurements(st)
+    assert len(runs) >= 2
+    checked = 0
+    for r in runs:
+        py = [asdict(c) for c in df.compare(st, run_now=r).changes]
+        sql = [dict(zip(COLUMNS, x)) for x in conn.execute("SELECT * FROM mart.changes_since(%s)", (r,)).fetchall()]
+        assert len(sql) == len(py), r
+        for a, b in zip(sql, py):
+            assert a == b, f"{r}: SQL {a} != Python {b}"
+        checked += len(py)
+    st.close()
+    assert checked > 0
+
+
+@pytest.mark.skipif(not SQLITE_FILES, reason="no out/*.db to load")
+def test_v_changes_is_the_latest_run_against_baselines(conn, tmp_path):
+    latest, scope = conn.execute("SELECT run_id, scope FROM mart.v_runs WHERE recency = 1").fetchone()
     view = conn.execute("SELECT * FROM mart.v_changes").fetchall()
-    fn = conn.execute("SELECT * FROM mart.changes(%s, %s)", (prev, now)).fetchall()
-    assert view == fn
+    fn = conn.execute("SELECT * FROM mart.changes_since(%s)", (latest,)).fetchall()
+    assert view == fn and view
+    st = merged_store(tmp_path)
+    py = df.compare(st)
+    st.close()
+    assert py.run_now == latest and py.scope == scope
+    assert [dict(zip(COLUMNS, r)) for r in view] == [asdict(c) for c in py.changes]
+    # the bug this migration exists for: a partial run must not report the accounts it did not try
+    if scope == "partial":
+        assert not [r for r in view if r[COLUMNS.index("kind")] == "dropped"]
+
+
+def test_scope_is_loaded_and_constrained(conn):
+    scopes = dict(conn.execute("SELECT source, min(scope) FROM raw.runs GROUP BY source").fetchall())
+    assert set(scopes.values()) <= {"full", "partial"}
+    if "legacy-import" in scopes:
+        assert scopes["legacy-import"] == "full"
+    with pytest.raises(psycopg.errors.CheckViolation):
+        with conn.transaction():
+            conn.execute("INSERT INTO raw.runs (run_id, started_at, source, scope, source_db) "
+                         "VALUES ('x', now(), 'playwright', 'everything', 'test')")
 
 
 # ------------------------------------------------------------- 5. rounding rule --

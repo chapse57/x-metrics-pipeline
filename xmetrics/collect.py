@@ -99,6 +99,13 @@ def is_logged_in(page) -> bool:
     return bool(page.evaluate(_JS_LOGGED_IN))
 
 
+def run_scope_for(todo: list[str], active: list[str]) -> str:
+    """'full' when this run will try every account we track, 'partial' when it tries a subset.
+    Decided from what is about to be measured, not from a flag, so it cannot be mis-declared:
+    the first collection and `--all` come out full; a hand-picked list comes out partial."""
+    return "full" if set(active) <= set(todo) else "partial"
+
+
 class Collector:
     def __init__(self, store: Store, profile_dir: str | Path, *, headless: bool = False,
                  posts_per_account: int = 20, max_scrolls: int = 30, record_dir: str | Path | None = None):
@@ -110,9 +117,12 @@ class Collector:
         self.record_dir = Path(record_dir) if record_dir else None  # Playwright video of the run (evidence / demo GIF)
 
     # ------------------------------------------------------------------
-    def run(self, handles: list[str] | None = None, *, note: str | None = None) -> str:
+    def run(self, handles: list[str] | None = None, *, note: str | None = None, everything: bool = False) -> str:
         from playwright.sync_api import sync_playwright
 
+        if everything:  # re-measure every account we track (the weekly "full" run)
+            for h in self.store.active_handles():
+                self.store.set_status(h, "pending")
         if handles:  # explicitly named handles are always (re)measured, whatever their previous status
             for h in handles:
                 if not self.store.get_account(h):
@@ -122,7 +132,9 @@ class Collector:
         if not todo:
             log.info("nothing pending — pass handles to (re)measure, or check `xmetrics status`")
             return ""
-        run_id = self.store.start_run("playwright", note)
+        scope = run_scope_for(todo, self.store.active_handles())
+        run_id = self.store.start_run("playwright", note, scope=scope)
+        log.info("run %s: %d account(s), scope=%s", run_id, len(todo), scope)
         with sync_playwright() as p:
             launch_kw = {"headless": self.headless, "locale": "en-US", "viewport": {"width": 1280, "height": 900}}
             if self.record_dir:

@@ -51,12 +51,12 @@ def _rows(sq: sqlite3.Connection, sql: str, params: tuple = ()) -> list[sqlite3.
 
 
 _UPSERT_RUN = """
-INSERT INTO raw.runs (run_id, started_at, finished_at, source, note, source_db)
-VALUES (%s, %s, %s, %s, %s, %s)
+INSERT INTO raw.runs (run_id, started_at, finished_at, source, note, scope, source_db)
+VALUES (%s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (run_id) DO UPDATE SET
   started_at = EXCLUDED.started_at, finished_at = EXCLUDED.finished_at,
-  source = EXCLUDED.source, note = EXCLUDED.note, source_db = EXCLUDED.source_db,
-  loaded_at = now()
+  source = EXCLUDED.source, note = EXCLUDED.note, scope = EXCLUDED.scope,
+  source_db = EXCLUDED.source_db, loaded_at = now()
 """
 
 _UPSERT_ACCOUNT = """
@@ -120,7 +120,9 @@ def load(conn: psycopg.Connection, sqlite_path: str | Path, run_id: str | None =
 
     with conn.transaction(), conn.cursor() as cur:
         cur.executemany(_UPSERT_RUN, [
-            (r["run_id"], _ts(r["started_at"]), _ts(r["finished_at"]), r["source"], r["note"], src)
+            (r["run_id"], _ts(r["started_at"]), _ts(r["finished_at"]), r["source"], r["note"],
+             r["scope"] if "scope" in r.keys() else "full",   # a file written before runs.scope existed
+             src)
             for r in runs])
         cur.executemany(_UPSERT_ACCOUNT, [
             (a["handle"], a["display"], a["bio"], a["bio_url"], a["dm_open"], a["niche"], a["niche_source"],

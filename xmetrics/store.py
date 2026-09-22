@@ -40,7 +40,10 @@ CREATE TABLE IF NOT EXISTS runs (
   started_at TEXT NOT NULL,
   finished_at TEXT,
   source     TEXT NOT NULL,                -- 'playwright' | 'legacy-import'
-  note       TEXT
+  note       TEXT,
+  scope      TEXT NOT NULL DEFAULT 'full'  -- 'full': tried every active account, so an account
+                                           --   missing from this run is a signal (dropped)
+                                           -- 'partial': tried a named subset; missing = not tried
 );
 CREATE TABLE IF NOT EXISTS measurements (
   handle            TEXT NOT NULL REFERENCES accounts(handle),
@@ -93,6 +96,16 @@ class Store:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.executescript(SCHEMA)
+        self._migrate()
+
+    def _migrate(self) -> None:
+        """Columns added after a table already existed in someone's file. Each is guarded, so
+        opening an old file upgrades it once and opening a new one does nothing."""
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(runs)")}
+        if "scope" not in cols:
+            # 'full' is what every run was before scope existed (absence counted as dropped)
+            self.conn.execute("ALTER TABLE runs ADD COLUMN scope TEXT NOT NULL DEFAULT 'full'")
+            self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
@@ -134,13 +147,30 @@ class Store:
         """Accounts not yet measured — this is what makes a run resumable."""
         return [r["handle"] for r in self.conn.execute("SELECT handle FROM accounts WHERE status='pending' ORDER BY created_at")]
 
+    def active_handles(self) -> list[str]:
+        """Every account we still track: anything not screened out. A run that tries all of
+        these is a 'full' run."""
+        return [r["handle"] for r in self.conn.execute(
+            "SELECT handle FROM accounts WHERE status != 'screened_out' ORDER BY created_at")]
+
+    def run_scope(self, run_id: str) -> str:
+        row = self.conn.execute("SELECT scope FROM runs WHERE run_id=?", (run_id,)).fetchone()
+        if row is None:
+            raise KeyError(run_id)
+        return row["scope"]
+
     def set_status(self, handle: str, status: str, reason: str | None = None) -> None:
         with self.tx() as c:
             c.execute("UPDATE accounts SET status=?, screen_reason=?, updated_at=? WHERE handle=?",
                       (status, reason, utcnow(), normalize_handle(handle)))
 
     # ---- runs -----------------------------------------------------------
-    def start_run(self, source: str, note: str | None = None) -> str:
+    def start_run(self, source: str, note: str | None = None, scope: str = "full") -> str:
+        """scope='full' means this run tries every active account, so an account that comes back
+        without a measurement was dropped or failed. 'partial' means a named subset was tried and
+        absence says nothing. diff.compare only reports 'dropped' after a full run."""
+        if scope not in ("full", "partial"):
+            raise ValueError(f"scope must be 'full' or 'partial', got {scope!r}")
         base = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + source
         run_id, n = base, 1
         with self.tx() as c:
@@ -149,8 +179,8 @@ class Store:
             while c.execute("SELECT 1 FROM runs WHERE run_id=?", (run_id,)).fetchone():
                 n += 1
                 run_id = f"{base}-{n}"
-            c.execute("INSERT INTO runs (run_id, started_at, source, note) VALUES (?,?,?,?)",
-                      (run_id, utcnow(), source, note))
+            c.execute("INSERT INTO runs (run_id, started_at, source, note, scope) VALUES (?,?,?,?,?)",
+                      (run_id, utcnow(), source, note, scope))
         return run_id
 
     def finish_run(self, run_id: str) -> None:

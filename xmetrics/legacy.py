@@ -42,7 +42,7 @@ def import_screened_out(store: Store, csv_path: str | Path) -> int:
 def import_jsonl(store: Store, path: str | Path, *, as_of: datetime | None = None,
                  screened_csv: str | Path | None = None) -> str:
     as_of = as_of or datetime.now(timezone.utc)
-    run_id = store.start_run("legacy-import", note=str(path))
+    run_id = store.start_run("legacy-import", note=str(path), scope="full")  # the whole delivered list
     n = 0
     for line in Path(path).read_text(encoding="utf-8").splitlines():
         if not line.strip():

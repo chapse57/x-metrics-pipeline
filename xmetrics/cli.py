@@ -100,7 +100,7 @@ def cmd_collect(args) -> int:
     from .collect import Collector
     st = _store(args)
     run_id = Collector(st, args.profile, headless=args.headless, posts_per_account=args.posts,
-                       record_dir=args.record).run(args.handles, note=args.note)
+                       record_dir=args.record).run(args.handles, note=args.note, everything=args.all)
     if args.record and run_id:
         print(f"video(s) written to {args.record}/ — convert with: python tools/webm_to_gif.py {args.record}")
     print(f"run {run_id}: {len(st.latest_measurements())} measured, {len(st.pending_handles())} pending")
@@ -200,6 +200,8 @@ def main(argv: list[str] | None = None) -> int:
     s = sub.add_parser("collect"); s.add_argument("handles", nargs="*"); s.add_argument("--profile", default=".xmetrics-profile")
     s.add_argument("--headless", action="store_true"); s.add_argument("--posts", type=int, default=20); s.add_argument("--note")
     s.add_argument("--record", metavar="DIR", help="record the browser session as .webm into DIR (evidence / demo GIF)")
+    s.add_argument("--all", action="store_true",
+                   help="re-measure every tracked account (a 'full' run: accounts that come back empty count as dropped)")
     s.set_defaults(fn=cmd_collect)
 
     s = sub.add_parser("classify"); s.add_argument("--claude", action="store_true"); s.add_argument("--model", default="claude-haiku-4-5-20251001")

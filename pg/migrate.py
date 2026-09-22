@@ -1,5 +1,8 @@
-"""Apply pg/schema/*.sql in order. Every file is idempotent, so `migrate` can run on every
-deploy and on every test session; a `pg.schema_migrations` table records what ran and when.
+"""Apply pg/schema/*.sql in order, each file once. A `pg.schema_migrations` table records what
+ran and when; files already in it are skipped, so `migrate` is safe to run on every deploy and
+every test session, and a later file may drop and rebuild what an earlier one created (001
+made mart.v_changes with one column set; 002 rebuilds it with another). To change the schema,
+add a file — never edit one that has been applied somewhere.
 
     python -m pg.migrate                      # DSN from $XMETRICS_PG_DSN
     python -m pg.migrate --dsn postgresql://x_admin@localhost:5432/xmetrics
@@ -38,18 +41,18 @@ def migration_files() -> list[Path]:
 
 
 def migrate(conn: psycopg.Connection) -> list[str]:
-    """Run every migration file in order, in one transaction. Returns the filenames applied."""
+    """Run every migration file not yet in the ledger, in order, in one transaction.
+    Returns the filenames applied (empty when the database is already current)."""
     applied = []
     with conn.transaction():
         conn.execute(_LEDGER)
+        done = {r[0] for r in conn.execute("SELECT filename FROM pg.schema_migrations")}
         for path in migration_files():
+            if path.name in done:
+                continue
             conn.execute(path.read_text(encoding="utf-8"))
-            conn.execute(
-                "INSERT INTO pg.schema_migrations (filename, applied_at) VALUES (%s, %s) "
-                "ON CONFLICT (filename) DO UPDATE SET applied_at = EXCLUDED.applied_at, "
-                "runs = pg.schema_migrations.runs + 1",
-                (path.name, datetime.now(timezone.utc)),
-            )
+            conn.execute("INSERT INTO pg.schema_migrations (filename, applied_at) VALUES (%s, %s)",
+                         (path.name, datetime.now(timezone.utc)))
             applied.append(path.name)
     return applied
 
@@ -59,8 +62,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--dsn", help="PostgreSQL DSN (default: $XMETRICS_PG_DSN)")
     args = p.parse_args(argv)
     with psycopg.connect(args.dsn or dsn_from_env()) as conn:
-        for name in migrate(conn):
+        applied = migrate(conn)
+        for name in applied:
             print(f"applied {name}")
+        if not applied:
+            print("up to date")
     return 0
 
 
