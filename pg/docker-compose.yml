@@ -1,0 +1,26 @@
+# Local PostgreSQL 16 for the pg/ layer. Nothing else — the API gets its own compose in week 2.
+#
+#   docker compose -f pg/docker-compose.yml up -d
+#   set XMETRICS_PG_DSN=postgresql://xmetrics:xmetrics@localhost:5432/xmetrics     (cmd)
+#   $env:XMETRICS_PG_DSN="postgresql://xmetrics:xmetrics@localhost:5432/xmetrics"  (PowerShell)
+#   python -m pg.migrate
+#   python -m pg.load out/x_legacy_claude.db out/x.db
+#   python -m pytest tests/test_pg.py -q
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: xmetrics
+      POSTGRES_PASSWORD: xmetrics
+      POSTGRES_DB: xmetrics
+    ports:
+      - "5432:5432"
+    volumes:
+      - xmetrics_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U xmetrics -d xmetrics"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  xmetrics_pg:
