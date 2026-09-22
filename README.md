@@ -286,7 +286,7 @@ It is five regexes, and that is deliberate. Its job is not to detect spam well; 
 
 ```
 xmetrics/   parse · metrics · store · legacy · validate · agent · export · diff · collect · cli
-pg/         PostgreSQL: docker-compose · migrate (schema/001, 002) · load (SQLite -> raw) · raw / core / mart
+pg/         PostgreSQL: docker-compose · migrate (schema/001-003) · load (SQLite -> raw) · raw / core / mart
 tests/      70 test cases in 56 test functions, parametrize expanded (parser formats, metrics, legacy cross-check, guardrails, diff rule + thresholds, rounding, SQL == Python)
 fixtures/   captured aria-labels + the real 2026-09 deliverable
 out/        generated: CSV, dashboard, validation report, agent audit
