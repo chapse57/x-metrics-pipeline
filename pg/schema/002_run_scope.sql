@@ -21,6 +21,21 @@ ALTER TABLE raw.runs ADD COLUMN IF NOT EXISTS scope text NOT NULL DEFAULT 'full'
 ALTER TABLE raw.runs DROP CONSTRAINT IF EXISTS runs_scope_check;
 ALTER TABLE raw.runs ADD CONSTRAINT runs_scope_check CHECK (scope IN ('full', 'partial'));
 
+-- core.measurements' legacy re-dating, now at an explicit UTC midnight rather than the session
+-- time zone's, because the baseline order below compares it with Python's string
+-- (range_end || 'T00:00:00+00:00') and the two must sort the same.
+CREATE OR REPLACE VIEW core.measurements AS
+SELECT m.handle, m.run_id, r.source, r.started_at AS run_started_at,
+       CASE WHEN r.source = 'legacy-import' AND m.range_end IS NOT NULL
+            THEN (m.range_end::text || 'T00:00:00+00:00')::timestamptz
+            ELSE m.measured_at END                      AS measured_at,
+       m.measured_at                                    AS recorded_at,
+       m.followers, m.posts_measured, m.range_start, m.range_end,
+       m.median_likes, m.median_replies, m.median_reposts, m.median_views,
+       m.engagement_rate, m.views_to_followers, m.tier, m.days_since_last_post
+FROM raw.measurements m
+JOIN raw.runs r ON r.run_id = m.run_id;
+
 DROP VIEW IF EXISTS mart.v_changes;
 DROP VIEW IF EXISTS mart.v_runs;
 DROP FUNCTION IF EXISTS mart.changes(text, text, double precision, double precision, double precision, double precision, int);
@@ -131,9 +146,10 @@ ORDER BY CASE kind WHEN 'dropped' THEN 0 WHEN 'new' THEN 1 WHEN 'changed' THEN 2
 $$;
 
 -- One run against each account's own previous measurement: diff.compare(store, run_now=...).
--- Baseline = the account's latest measurement from any run that started earlier (ties by
--- run_id, the order mart.v_runs uses). Screened-out accounts are never a baseline. 'dropped'
--- rows appear only when this run's scope is 'full'.
+-- Baseline = the account's latest measurement taken before this run's measurements — by
+-- measurement time (core.measurements.measured_at, which re-dates legacy rows), not by run
+-- start, because an import runs after the numbers it carries were taken. Ties by run_id.
+-- Screened-out accounts are never a baseline. 'dropped' rows appear only when scope is 'full'.
 CREATE FUNCTION mart.changes_since(
   run_now text,
   followers_pct double precision DEFAULT 5.0, engagement_pp double precision DEFAULT 0.2,
@@ -141,15 +157,16 @@ CREATE FUNCTION mart.changes_since(
   silent_days int DEFAULT 14
 ) RETURNS SETOF mart.change
 LANGUAGE sql STABLE AS $$
-WITH nowr AS (SELECT run_id, started_at, scope FROM raw.runs WHERE run_id = run_now),
+WITH nowr AS (SELECT run_id, scope FROM raw.runs WHERE run_id = run_now),
+     cut AS (SELECT min(measured_at) AS cutoff FROM core.measurements WHERE run_id = run_now),
      n AS (SELECT m AS row, m.handle FROM raw.measurements m WHERE m.run_id = run_now),
      earlier AS (
        SELECT m AS row, m.handle,
-              row_number() OVER (PARTITION BY m.handle ORDER BY r.started_at DESC, r.run_id DESC) AS rn
+              row_number() OVER (PARTITION BY m.handle ORDER BY c.measured_at DESC, m.run_id DESC) AS rn
        FROM raw.measurements m
-       JOIN raw.runs r ON r.run_id = m.run_id
-       CROSS JOIN nowr
-       WHERE (r.started_at, r.run_id) < (nowr.started_at, nowr.run_id)
+       JOIN core.measurements c ON c.handle = m.handle AND c.run_id = m.run_id
+       CROSS JOIN cut
+       WHERE m.run_id <> run_now AND c.measured_at < cut.cutoff
      ),
      base AS (
        SELECT e.row, e.handle FROM earlier e

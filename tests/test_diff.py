@@ -20,12 +20,14 @@ def _summary(followers, er, vr, days=1, posts=20):
 
 def _run(store: Store, note: str, rows: dict[str, Summary], started_at: str, scope: str = "full") -> str:
     run_id = store.start_run("playwright", note=note, scope=scope)
-    # make run order explicit and independent of wall-clock
-    store.conn.execute("UPDATE runs SET started_at=? WHERE run_id=?", (started_at, run_id)); store.conn.commit()
     for h, s in rows.items():
         store.upsert_account(h)
         store.save_measurement(h, run_id, s)
     store.finish_run(run_id)
+    # make run and measurement order explicit and independent of wall-clock
+    store.conn.execute("UPDATE runs SET started_at=? WHERE run_id=?", (started_at, run_id))
+    store.conn.execute("UPDATE measurements SET measured_at=? WHERE run_id=?", (started_at, run_id))
+    store.conn.commit()
     return run_id
 
 
@@ -108,6 +110,27 @@ def test_baseline_is_the_accounts_own_previous_measurement_not_the_previous_run(
     # pair mode is still available for "exactly these two runs", whole sets, absence on both sides reported
     pair = df.compare(st, run_prev=a, run_now=c)
     assert pair.mode == "pair" and {x.handle: x.kind for x in pair.changes} == {"a": "dropped", "b": "changed"}
+
+
+def test_baseline_is_by_measurement_time_not_run_start(tmp_path):
+    """The 2026-09 legacy import ran on 09-07 but carries numbers taken by hand up to 09-05. A live
+    run on 09-06 sits between the two dates: by run start the import is newer, by measurement it is
+    older. The baseline goes by measurement, the same way core.measurements re-dates those rows."""
+    st = Store(tmp_path / "x.db")
+    live1 = _run(st, "live", {"a": _summary(1_000, 1.0, 10.0)}, "2026-09-06T03:19:21+00:00", scope="partial")
+    imp = st.start_run("legacy-import", note="hand list", scope="full")
+    st.save_measurement("a", imp, Summary(followers=900, posts_measured=20, range_start="2026-08-21", range_end="2026-09-05",
+                                          median_likes=1, median_replies=1, median_reposts=1, median_views=100,
+                                          engagement_rate=1.0, views_to_followers=10.0, tier=tier_for(900), days_since_last_post=1))
+    st.conn.execute("UPDATE runs SET started_at='2026-09-07T02:24:51+00:00' WHERE run_id=?", (imp,))
+    st.conn.execute("UPDATE measurements SET measured_at='2026-09-07T02:24:51+00:00' WHERE run_id=?", (imp,)); st.conn.commit()
+    live2 = _run(st, "live", {"a": _summary(1_100, 1.0, 10.0)}, "2026-09-18T02:07:45+00:00", scope="partial")
+    assert df.runs_with_measurements(st) == [live1, imp, live2]          # runs are ordered by when they ran…
+    (c,) = df.compare(st, run_now=live2).changes
+    assert c.run_prev == live1 and c.followers_prev == 1_000             # …baselines by when the numbers were taken
+    (c,) = df.compare(st, run_now=live1).changes
+    assert c.run_prev == imp and c.followers_prev == 900                 # 09-05 hand numbers precede the 09-06 run
+    assert [x.kind for x in df.compare(st, run_now=imp).changes] == ["new"]   # nothing was taken before 09-05
 
 
 def test_full_run_lists_tried_but_empty_accounts_as_dropped_except_screened_out(tmp_path):

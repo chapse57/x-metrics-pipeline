@@ -18,7 +18,9 @@ baseline two runs back. So:
 
 - `compare(store)` / `compare(store, run_now=r)` — baseline mode. For every account measured in
   the run, the previous value is that account's latest earlier measurement, whichever run it
-  came from. `new` = no earlier measurement at all. `dropped` = only if the run's scope is
+  came from — earlier by measurement time, not by run start, so an import that runs after the
+  numbers it carries were taken sorts where the numbers belong (see baseline_for_run).
+  `new` = no earlier measurement at all. `dropped` = only if the run's scope is
   'full' (it tried every tracked account — see store.start_run): tracked accounts with an
   earlier measurement that this run did not return.
 - `compare(store, run_prev=a, run_now=b)` — pair mode, both runs named explicitly: the two
@@ -128,24 +130,34 @@ def measurements_for_run(store: Store, run_id: str) -> dict[str, sqlite3.Row]:
     return {r["handle"]: r for r in rows}
 
 
+# When is a measurement from? Its measured_at — except the 2026-09 legacy import, which stamped
+# every row with the *import* time (2026-09-07) although the numbers were taken by hand days
+# earlier; for those rows the measurement window's end is the honest "as of". This is the same
+# correction core.measurements makes in PostgreSQL, so both sides order baselines identically.
+_AS_OF = ("CASE WHEN r.source = 'legacy-import' AND m.range_end IS NOT NULL "
+          "THEN m.range_end || 'T00:00:00+00:00' ELSE m.measured_at END")
+
+
 def baseline_for_run(store: Store, run_id: str) -> dict[str, sqlite3.Row]:
-    """Each tracked account's latest measurement from any run that started before `run_id`
-    (ties on started_at broken by run_id, the same order runs_with_measurements uses).
-    Includes accounts not in `run_id` — the caller decides whether their absence means anything."""
+    """Each tracked account's latest measurement taken before `run_id`'s measurements — by
+    measurement time ("as of"), not by run start, because an import runs after the numbers it
+    carries were taken. Ties broken by run_id. Includes accounts not in `run_id`; the caller
+    decides whether their absence means anything."""
     rows = store.conn.execute(
-        """
-        WITH now AS (SELECT started_at, run_id FROM runs WHERE run_id = ?),
+        f"""
+        WITH eff AS (
+               SELECT m.*, r.started_at AS run_started_at, {_AS_OF} AS as_of
+               FROM measurements m JOIN runs r ON r.run_id = m.run_id),
+             cut AS (SELECT min(as_of) AS cutoff FROM eff WHERE run_id = ?),
              earlier AS (
-               SELECT m.*, r.started_at AS run_started_at,
-                      ROW_NUMBER() OVER (PARTITION BY m.handle ORDER BY r.started_at DESC, r.run_id DESC) AS rn
-               FROM measurements m JOIN runs r ON r.run_id = m.run_id, now
-               WHERE (r.started_at, r.run_id) < (now.started_at, now.run_id)
-             )
+               SELECT eff.*, ROW_NUMBER() OVER (PARTITION BY handle ORDER BY as_of DESC, run_id DESC) AS rn
+               FROM eff, cut
+               WHERE eff.run_id != ? AND eff.as_of < cut.cutoff)
         SELECT a.display, a.status, e.*
         FROM earlier e JOIN accounts a ON a.handle = e.handle
         WHERE e.rn = 1 AND a.status != 'screened_out'
         """,
-        (run_id,),
+        (run_id, run_id),
     ).fetchall()
     return {r["handle"]: r for r in rows}
 
