@@ -1,0 +1,40 @@
+20-account re-measure, 2026-09-23 (run 20260923T091254Z-playwright: 20 targets, 20 measured, 0 pending)
+Each account against its own previous measurement: 17 from the 2026-08/09 hand-measured import,
+3 from the 2026-09-18 live run. Accounts are picked in docs/remeasure-20.csv for the flag each might fire.
+
+$ docker compose exec postgres psql -U xmetrics -d xmetrics -P pager=off \
+    -c "select handle, kind, flags, followers_prev, followers_now, followers_delta_pct, run_prev from mart.v_changes;"
+     handle      |  kind   |            flags             | followers_prev | followers_now | followers_delta_pct |            run_prev
+-----------------+---------+------------------------------+----------------+---------------+---------------------+--------------------------------
+ tradestl        | changed | {active_again}               |          18700 |         18900 |                1.07 | 20260907T022451Z-legacy-import
+ realfatcat1     | changed | {engagement_down,views_down} |           3259 |          3283 |                0.74 | 20260918T020745Z-playwright
+ frankcappelleri | changed | {views_up}                   |          24100 |         24200 |                0.41 | 20260907T022451Z-legacy-import
+ triggertrades   | changed | {views_down}                 |          98900 |         99300 |                 0.4 | 20260907T022451Z-legacy-import
+ brianleetrades  | changed | {went_silent}                |          56500 |         56700 |                0.35 | 20260907T022451Z-legacy-import
+ theshortbear    | changed | {views_up}                   |         205900 |        206500 |                0.29 | 20260907T022451Z-legacy-import
+ yuseftrades     | changed | {went_silent}                |           5291 |          5306 |                0.28 | 20260907T022451Z-legacy-import
+ steenbab        | changed | {views_up}                   |          97600 |         97800 |                 0.2 | 20260907T022451Z-legacy-import
+ yuriymatso      | changed | {views_up}                   |          78400 |         78500 |                0.13 | 20260907T022451Z-legacy-import
+ merrittblack    | changed | {active_again}               |          19000 |         19000 |                   0 | 20260918T020745Z-playwright
+ probablechris   | changed | {}                           |           7757 |          7839 |                1.06 | 20260918T020745Z-playwright
+ theorytrading   | changed | {}                           |           4396 |          4424 |                0.64 | 20260907T022451Z-legacy-import
+ jduntrades      | changed | {}                           |         147700 |        148500 |                0.54 | 20260907T022451Z-legacy-import
+ _amtrades       | changed | {}                           |         113800 |        114300 |                0.44 | 20260907T022451Z-legacy-import
+ macrocharts     | changed | {}                           |         197000 |        197600 |                 0.3 | 20260907T022451Z-legacy-import
+ anthonycrudele  | changed | {}                           |         100100 |        100200 |                 0.1 | 20260907T022451Z-legacy-import
+ scarfacetrades_ | changed | {}                           |          96100 |         96200 |                 0.1 | 20260907T022451Z-legacy-import
+ damonpavlatos   | changed | {}                           |          29400 |         29400 |                   0 | 20260907T022451Z-legacy-import
+ mendatrades     | changed | {}                           |          24200 |         24200 |                   0 | 20260907T022451Z-legacy-import
+ verniman        | changed | {}                           |          25100 |         25100 |                   0 | 20260907T022451Z-legacy-import
+(20 rows)
+
+Read against the reasons in docs/remeasure-20.csv:
+- 0 new: 17 accounts first measured by this collector still found their hand-measured baseline in another file.
+- 0 dropped: nothing went missing.
+- went_silent as predicted: brianleetrades, yuseftrades (were 10-12 days since last post). damonpavlatos and
+  macrocharts, also picked for this, posted in time and were not flagged.
+- active_again as predicted: tradestl (was 17 days).
+- active_again not predicted: merrittblack, flagged went_silent on 2026-09-18, posting again on 2026-09-23.
+  Only visible with three measurements of the same account.
+- tier_change: none. The six accounts within 3-5 % of the 25K / 100K lines did not cross in three weeks.
+- views flags on 7 of 20 — see the check below before trusting them.

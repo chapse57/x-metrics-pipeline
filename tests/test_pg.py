@@ -250,17 +250,19 @@ def test_run_targets_are_loaded_or_reconstructed_and_constrained(conn):
     """Every run with measurements has targets; files from before run_targets get them
     reconstructed (targets = measured) exactly as xmetrics.store does, so both sides agree."""
     from xmetrics.store import Store as S
+    # reconstructed targets carry BACKFILL_NOTE in `detail`; targets the collector recorded itself carry
+    # NULL — hence IS NOT DISTINCT FROM, so the flag is True/False per run and never NULL
     rows = conn.execute("""
         SELECT r.run_id, count(m.handle), count(t.handle) FILTER (WHERE t.outcome = 'measured'),
-               bool_and(t.detail = %s)
+               bool_and(t.detail IS NOT DISTINCT FROM %s)
         FROM raw.runs r
         JOIN raw.measurements m ON m.run_id = r.run_id
         LEFT JOIN raw.run_targets t ON t.run_id = r.run_id AND t.handle = m.handle
         GROUP BY r.run_id""", (S.BACKFILL_NOTE,)).fetchall()
     assert rows
-    for run_id, measured, targeted, backfilled in rows:
+    for run_id, measured, targeted, reconstructed in rows:
         assert measured == targeted, run_id                       # every measurement has a 'measured' target
-        assert backfilled is not None
+        assert reconstructed in (True, False), run_id            # all-or-nothing per run: never a mix
     status = {r[0]: r for r in conn.execute(
         "SELECT run_id, targets, measured, missing, failed, not_reached, complete FROM mart.v_run_status").fetchall()}
     for run_id, *_ in rows:
