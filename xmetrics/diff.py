@@ -9,20 +9,26 @@ Nothing here is estimated. Every delta is computed from two rows already in `mea
 numbers it came from. Thresholds only decide what gets *flagged*; every delta is reported.
 
 The rule, in one sentence: **each account is compared with its own previous measurement, and
-an account counts as "dropped" only when a run that was meant to cover it came back without it.**
+an account is reported "dropped" only when we went looking for it and it was not there.**
+
+Or, as it is said to a client: "This dashboard never reports an account as gone unless we
+actually went looking for it and it wasn't there. If we didn't look, it says so."
 
 Why not "this run vs the previous run"? Runs do not all cover the same accounts. A weekly run
 may re-measure 20 of 95; a first live run may be 3. Comparing two runs as whole sets would then
 call 75 accounts "dropped" that were simply not tried, and call an account "new" that has a
-baseline two runs back. So:
+baseline two runs back. Absence is only a signal when there was an attempt — and even then,
+"the account is gone" and "our collector failed" are different facts. run_targets records
+both, per account (see store.start_run):
 
 - `compare(store)` / `compare(store, run_now=r)` — baseline mode. For every account measured in
-  the run, the previous value is that account's latest earlier measurement, whichever run it
-  came from — earlier by measurement time, not by run start, so an import that runs after the
-  numbers it carries were taken sorts where the numbers belong (see baseline_for_run).
-  `new` = no earlier measurement at all. `dropped` = only if the run's scope is
-  'full' (it tried every tracked account — see store.start_run): tracked accounts with an
-  earlier measurement that this run did not return.
+  the run, the previous value is that account's latest measurement taken before this one,
+  whichever run it came from — by measurement time, not by run start, so an import that runs
+  after the numbers it carries were taken sorts where the numbers belong (see baseline_for_run).
+  `new` = no earlier measurement at all. `dropped` = a target of this run whose outcome is
+  'missing' (we got there; the account does not exist or is suspended) and that has an earlier
+  measurement. Targets that came back 'error' (we got there, could not read it) or stayed
+  'pending' (never reached) are counted and named in the report, never turned into a change.
 - `compare(store, run_prev=a, run_now=b)` — pair mode, both runs named explicitly: the two
   runs as whole sets, absence on either side reported as new/dropped. For "show me exactly
   these two".
@@ -90,8 +96,15 @@ class DiffResult:
     run_now: str | None
     changes: list[Change]
     prev_runs: list[str] = field(default_factory=list)   # every run a baseline was taken from (sorted)
-    scope: str | None = None          # run_now's scope: 'full' | 'partial' (None when nothing to compare)
+    targets: dict[str, int] = field(default_factory=dict)  # run_now's outcome counts: measured/missing/error/pending
+    failed: list[str] = field(default_factory=list)      # targets that came back 'error' (we got there, could not read)
+    not_reached: list[str] = field(default_factory=list) # targets still 'pending' (the run never got to them)
     mode: str = "baseline"            # 'baseline' | 'pair'
+
+    @property
+    def complete(self) -> bool:
+        """True when the run reached every account it set out to. False is what /health reports."""
+        return not self.not_reached
 
     @property
     def new(self) -> list[Change]:
@@ -111,13 +124,23 @@ class DiffResult:
 
 
 # --------------------------------------------------------------------------- queries --
+# When is a measurement from? Its measured_at — except the 2026-09 legacy import, which stamped
+# every row with the *import* time (2026-09-07) although the numbers were taken by hand days
+# earlier; for those rows the measurement window's end is the honest "as of". This is the same
+# correction core.measurements makes in PostgreSQL, so both sides order baselines identically.
+_AS_OF = ("CASE WHEN r.source = 'legacy-import' AND m.range_end IS NOT NULL "
+          "THEN m.range_end || 'T00:00:00+00:00' ELSE m.measured_at END")
+
+
 def runs_with_measurements(store: Store) -> list[str]:
-    """Run ids that actually produced measurements, oldest first.
-    Ordered by the runs table's started_at, not by run_id string, so an imported legacy run
-    with an older timestamp sorts where it belongs."""
+    """Run ids that actually produced measurements, oldest first — by when their numbers were
+    taken (the latest "as of" among the run's measurements), not by when the run started. An
+    import that runs on the 7th carrying numbers taken on the 5th sorts before a live run on
+    the 6th. mart.v_runs orders the same way."""
     rows = store.conn.execute(
-        "SELECT r.run_id FROM runs r WHERE EXISTS (SELECT 1 FROM measurements m WHERE m.run_id = r.run_id) "
-        "ORDER BY r.started_at, r.run_id"
+        f"""SELECT m.run_id, max({_AS_OF}) AS taken
+            FROM measurements m JOIN runs r ON r.run_id = m.run_id
+            GROUP BY m.run_id ORDER BY taken, m.run_id"""
     ).fetchall()
     return [r["run_id"] for r in rows]
 
@@ -130,34 +153,33 @@ def measurements_for_run(store: Store, run_id: str) -> dict[str, sqlite3.Row]:
     return {r["handle"]: r for r in rows}
 
 
-# When is a measurement from? Its measured_at — except the 2026-09 legacy import, which stamped
-# every row with the *import* time (2026-09-07) although the numbers were taken by hand days
-# earlier; for those rows the measurement window's end is the honest "as of". This is the same
-# correction core.measurements makes in PostgreSQL, so both sides order baselines identically.
-_AS_OF = ("CASE WHEN r.source = 'legacy-import' AND m.range_end IS NOT NULL "
-          "THEN m.range_end || 'T00:00:00+00:00' ELSE m.measured_at END")
-
-
 def baseline_for_run(store: Store, run_id: str) -> dict[str, sqlite3.Row]:
-    """Each tracked account's latest measurement taken before `run_id`'s measurements — by
-    measurement time ("as of"), not by run start, because an import runs after the numbers it
-    carries were taken. Ties broken by run_id. Includes accounts not in `run_id`; the caller
-    decides whether their absence means anything."""
+    """For every account this run measured or went looking for, that account's latest earlier
+    measurement — earlier than *its own* measurement in this run (by "as of", see _AS_OF), or,
+    for a target that came back missing, earlier than the run's start. Per account, not per
+    run: a run's measurements can span days (an import carries each account's own window), so a
+    single run-level cutoff would pick the wrong baseline for some of them. Ties by run_id."""
     rows = store.conn.execute(
         f"""
         WITH eff AS (
-               SELECT m.*, r.started_at AS run_started_at, {_AS_OF} AS as_of
+               SELECT m.*, {_AS_OF} AS as_of
                FROM measurements m JOIN runs r ON r.run_id = m.run_id),
-             cut AS (SELECT min(as_of) AS cutoff FROM eff WHERE run_id = ?),
+             subjects AS (
+               SELECT handle, as_of AS cutoff FROM eff WHERE run_id = :run
+               UNION
+               SELECT t.handle, r.started_at
+               FROM run_targets t JOIN runs r ON r.run_id = t.run_id
+               WHERE t.run_id = :run AND t.outcome = 'missing'
+                 AND NOT EXISTS (SELECT 1 FROM measurements m WHERE m.run_id = :run AND m.handle = t.handle)),
              earlier AS (
-               SELECT eff.*, ROW_NUMBER() OVER (PARTITION BY handle ORDER BY as_of DESC, run_id DESC) AS rn
-               FROM eff, cut
-               WHERE eff.run_id != ? AND eff.as_of < cut.cutoff)
+               SELECT eff.*, ROW_NUMBER() OVER (PARTITION BY eff.handle ORDER BY eff.as_of DESC, eff.run_id DESC) AS rn
+               FROM eff JOIN subjects s ON s.handle = eff.handle
+               WHERE eff.run_id != :run AND eff.as_of < s.cutoff)
         SELECT a.display, a.status, e.*
         FROM earlier e JOIN accounts a ON a.handle = e.handle
-        WHERE e.rn = 1 AND a.status != 'screened_out'
+        WHERE e.rn = 1
         """,
-        (run_id, run_id),
+        {"run": run_id},
     ).fetchall()
     return {r["handle"]: r for r in rows}
 
@@ -249,22 +271,28 @@ def compare(store: Store, run_prev: str | None = None, run_now: str | None = Non
         raise ValueError(f"unknown run id(s): have {runs}")
 
     now = measurements_for_run(store, run_now)
-    scope = store.run_scope(run_now)
+    outcomes = store.run_targets(run_now)
+    counts = {k: sum(1 for v in outcomes.values() if v == k) for k in Store.OUTCOMES}
+    failed = sorted(h for h, o in outcomes.items() if o == "error")
+    not_reached = sorted(h for h, o in outcomes.items() if o == "pending")
 
     if run_prev is not None:  # pair mode: the two runs as whole sets
         prev = measurements_for_run(store, run_prev)
         changes = [compare_rows(prev.get(h), now.get(h), th) for h in sorted(set(prev) | set(now))]
         _sort(changes)
-        return DiffResult(run_prev, run_now, changes, prev_runs=[run_prev], scope=scope, mode="pair")
+        return DiffResult(run_prev, run_now, changes, prev_runs=[run_prev], targets=counts,
+                          failed=failed, not_reached=not_reached, mode="pair")
 
     # baseline mode
     base = baseline_for_run(store, run_now)                # empty for the first run: everything is new
     changes = [compare_rows(base.get(h), now[h], th) for h in sorted(now)]
-    if scope == "full":                                      # absence is a signal only when we tried
-        changes += [compare_rows(base[h], None, th) for h in sorted(set(base) - set(now))]
+    # went looking, not there — and only if there was something to lose (a baseline)
+    missing = sorted(h for h, o in outcomes.items() if o == "missing" and h in base and h not in now)
+    changes += [compare_rows(base[h], None, th) for h in missing]
     _sort(changes)
-    used = sorted({base[h]["run_id"] for h in base if h in now or scope == "full"})
-    return DiffResult(used[0] if len(used) == 1 else None, run_now, changes, prev_runs=used, scope=scope)
+    used = sorted({base[h]["run_id"] for h in base if h in now or h in missing})
+    return DiffResult(used[0] if len(used) == 1 else None, run_now, changes, prev_runs=used,
+                      targets=counts, failed=failed, not_reached=not_reached)
 
 
 # -------------------------------------------------------------------------- output --
@@ -289,9 +317,25 @@ def _since(res: DiffResult) -> str:
 def summary_line(res: DiffResult) -> str:
     if not _comparable(res):
         return "changes: nothing to compare yet (need two runs with measurements)"
-    return (f"changes {_since(res)} → {res.run_now} [{res.scope}]: "
+    return (f"changes {_since(res)} → {res.run_now}: "
             f"{len(res.flagged)} flagged | {len(res.new)} new | {len(res.dropped)} dropped | "
-            f"{len(res.unchanged)} unchanged of {len(res.changes)}")
+            f"{len(res.unchanged)} unchanged of {len(res.changes)}"
+            + _targets_line(res))
+
+
+def _targets_line(res: DiffResult) -> str:
+    t = res.targets
+    if not t:
+        return ""
+    tried = sum(t.values())
+    parts = [f"{t.get('measured', 0)} measured"]
+    if t.get("missing"):
+        parts.append(f"{t['missing']} missing")
+    if t.get("error"):
+        parts.append(f"{t['error']} failed")
+    if t.get("pending"):
+        parts.append(f"{t['pending']} not reached")
+    return f" · tried {tried}: " + ", ".join(parts)
 
 
 def report(res: DiffResult) -> str:
@@ -303,9 +347,17 @@ def report(res: DiffResult) -> str:
     else:
         lines += [f"this run: `{res.run_now}`  ·  each account vs its previous measurement, taken from "
                   + ", ".join(f"`{r}`" for r in res.prev_runs)]
-    lines += [f"scope: {res.scope} — " + ("every tracked account was tried; accounts that came back empty are listed as not measured"
-                                          if res.scope == "full" else
-                                          "a named subset was tried; accounts not in this run are not listed"), ""]
+    lines += ["Accounts this run did not try are not listed; their last numbers stand and their age is "
+              "on the freshness view. \"Dropped\" below means we went looking and the account was not there.", ""]
+    if res.not_reached or res.failed:
+        lines += ["## Incomplete — no change is reported for these", ""]
+        if res.not_reached:
+            lines.append(f"- never reached ({len(res.not_reached)}), the run stopped first: "
+                         + ", ".join(f"@{h}" for h in res.not_reached))
+        if res.failed:
+            lines.append(f"- reached but could not be read ({len(res.failed)}): "
+                         + ", ".join(f"@{h}" for h in res.failed))
+        lines.append("")
 
     if res.flagged:
         lines += ["## Flagged (crossed a threshold)", "",
@@ -321,7 +373,7 @@ def report(res: DiffResult) -> str:
     if res.new:
         lines += ["## New this run", ""] + [f"- @{c.display} — {c.followers_now:,} followers, ER {c.engagement_now:.2f}%, {c.tier_now}" for c in res.new] + [""]
     if res.dropped:
-        lines += ["## Not measured this run (were tried, came back empty)", ""] + [
+        lines += ["## Dropped — went looking, account not there (missing or suspended)", ""] + [
             f"- @{c.display} — last seen {c.followers_prev:,} followers, ER {c.engagement_prev:.2f}%" for c in res.dropped] + [""]
     if res.unchanged:
         lines += [f"## Within thresholds ({len(res.unchanged)})", "",
@@ -336,10 +388,12 @@ def report(res: DiffResult) -> str:
 def as_json(res: DiffResult) -> dict:
     return {
         "run_prev": res.run_prev, "run_now": res.run_now,
-        "prev_runs": res.prev_runs, "scope": res.scope, "mode": res.mode,
+        "prev_runs": res.prev_runs, "mode": res.mode,
         "summary": summary_line(res),
         "counts": {"flagged": len(res.flagged), "new": len(res.new), "dropped": len(res.dropped),
                    "unchanged": len(res.unchanged), "total": len(res.changes)},
+        "targets": res.targets, "failed": res.failed, "not_reached": res.not_reached,
+        "complete": res.complete,
         "changes": [asdict(c) for c in res.changes],
     }
 

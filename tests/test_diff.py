@@ -18,11 +18,18 @@ def _summary(followers, er, vr, days=1, posts=20):
                    engagement_rate=er, views_to_followers=vr, tier=tier_for(followers), days_since_last_post=days)
 
 
-def _run(store: Store, note: str, rows: dict[str, Summary], started_at: str, scope: str = "full") -> str:
-    run_id = store.start_run("playwright", note=note, scope=scope)
+def _run(store: Store, note: str, rows: dict[str, Summary], started_at: str, *,
+         missing: list[str] = (), error: list[str] = (), pending: list[str] = ()) -> str:
+    """A run that measured `rows`, and also went looking for `missing` (not there), `error`
+    (there, unreadable) and `pending` (never reached) accounts."""
+    run_id = store.start_run("playwright", note=note, targets=[*rows, *missing, *error, *pending])
     for h, s in rows.items():
         store.upsert_account(h)
         store.save_measurement(h, run_id, s)
+    for h in missing:
+        store.mark_target(run_id, h, "missing", "account missing/suspended")
+    for h in error:
+        store.mark_target(run_id, h, "error", "followers not found (markup changed?)")
     store.finish_run(run_id)
     # make run and measurement order explicit and independent of wall-clock
     store.conn.execute("UPDATE runs SET started_at=? WHERE run_id=?", (started_at, run_id))
@@ -47,7 +54,7 @@ def two_runs(tmp_path):
         "fading":   _summary(10_000, 0.50, 30.0, days=20),
         "quiet":    _summary(10_000, 0.42, 30.0),           # +0.12pp (<0.2pp) even though +40% relative
         "newbie":   _summary(3_000, 3.00, 80.0),            # new in week 2
-    }, "2026-09-14T00:00:00+00:00", scope="full")           # full: every account was tried, "gone" came back empty
+    }, "2026-09-14T00:00:00+00:00", missing=["gone"])      # went looking for "gone": not there
     return st, a, b
 
 
@@ -79,30 +86,52 @@ def test_thresholds_are_tunable(two_runs):
     assert "engagement_up" in by["quiet"].flags
 
 
-def test_partial_run_reports_no_dropped_but_still_new(tmp_path):
-    """A run that tried a named subset says nothing about the accounts it did not try."""
+def test_a_run_says_nothing_about_accounts_it_did_not_try(tmp_path):
+    """Week 2 measured a subset. "b" was not tried, so it is neither dropped nor listed."""
     st = Store(tmp_path / "x.db")
     _run(st, "week 1", {"a": _summary(1_000, 1.0, 10.0), "b": _summary(2_000, 1.0, 10.0)}, "2026-09-07T00:00:00+00:00")
-    _run(st, "week 2", {"a": _summary(1_100, 1.0, 10.0), "c": _summary(3_000, 1.0, 10.0)},
-         "2026-09-14T00:00:00+00:00", scope="partial")
+    _run(st, "week 2", {"a": _summary(1_100, 1.0, 10.0), "c": _summary(3_000, 1.0, 10.0)}, "2026-09-14T00:00:00+00:00")
     res = df.compare(st)
-    assert res.scope == "partial" and res.mode == "baseline"
+    assert res.mode == "baseline" and res.complete
     assert {c.handle: c.kind for c in res.changes} == {"a": "changed", "c": "new"}   # "b" is not listed at all
-    assert "0 dropped" in df.summary_line(res) and "[partial]" in df.summary_line(res)
+    assert "0 dropped" in df.summary_line(res) and "tried 2: 2 measured" in df.summary_line(res)
+
+
+def test_dropped_means_we_went_looking_and_it_was_not_there(tmp_path):
+    """Three ways to come back without a number, three different meanings. Only 'missing' —
+    the account itself is gone — becomes a change. A failed read or an unreached account is
+    the collector's problem and is reported as such, never as the account's."""
+    st = Store(tmp_path / "x.db")
+    _run(st, "week 1", {h: _summary(1_000, 1.0, 10.0) for h in "abcd"}, "2026-09-07T00:00:00+00:00")
+    r = _run(st, "week 2", {"a": _summary(1_000, 1.0, 10.0)}, "2026-09-14T00:00:00+00:00",
+             missing=["b"], error=["c"], pending=["d"])
+    res = df.compare(st)
+    assert res.run_now == r
+    assert {c.handle: c.kind for c in res.changes} == {"a": "unchanged", "b": "dropped"}
+    assert res.failed == ["c"] and res.not_reached == ["d"] and not res.complete
+    assert res.targets == {"pending": 1, "measured": 1, "missing": 1, "error": 1}
+    text = df.report(res)
+    assert "went looking, account not there" in text and "@b" in text
+    assert "never reached (1)" in text and "@d" in text and "could not be read (1)" in text and "@c" in text
+    payload = df.as_json(res)
+    assert payload["complete"] is False and payload["not_reached"] == ["d"] and payload["failed"] == ["c"]
+    # a missing account with no earlier measurement is nothing to report — there was nothing to lose
+    r2 = _run(st, "week 3", {}, "2026-09-21T00:00:00+00:00", missing=["zzz"])
+    assert df.compare(st, run_now=r2).changes == [] if r2 in df.runs_with_measurements(st) else True
 
 
 def test_baseline_is_the_accounts_own_previous_measurement_not_the_previous_run(tmp_path):
     """Week 3 re-measures only "b", which week 2 skipped: its baseline is week 1, not "new"."""
     st = Store(tmp_path / "x.db")
     a = _run(st, "week 1", {"a": _summary(1_000, 1.0, 10.0), "b": _summary(2_000, 1.0, 10.0)}, "2026-09-07T00:00:00+00:00")
-    b = _run(st, "week 2", {"a": _summary(1_100, 1.0, 10.0)}, "2026-09-14T00:00:00+00:00", scope="partial")
-    c = _run(st, "week 3", {"b": _summary(2_400, 1.0, 10.0)}, "2026-09-21T00:00:00+00:00", scope="partial")
+    b = _run(st, "week 2", {"a": _summary(1_100, 1.0, 10.0)}, "2026-09-14T00:00:00+00:00")
+    c = _run(st, "week 3", {"b": _summary(2_400, 1.0, 10.0)}, "2026-09-21T00:00:00+00:00")
     res = df.compare(st)
     assert res.run_now == c and res.prev_runs == [a] and res.run_prev == a
     (only,) = res.changes
     assert only.handle == "b" and only.kind == "changed" and only.followers_delta == 400 and "followers_up" in only.flags
     # a run touching both: baselines come from two different runs, and the report says so
-    d = _run(st, "week 4", {"a": _summary(1_100, 1.0, 10.0), "b": _summary(2_400, 1.0, 10.0)}, "2026-09-28T00:00:00+00:00", scope="partial")
+    d = _run(st, "week 4", {"a": _summary(1_100, 1.0, 10.0), "b": _summary(2_400, 1.0, 10.0)}, "2026-09-28T00:00:00+00:00")
     res = df.compare(st)
     assert res.run_now == d and res.prev_runs == [b, c] and res.run_prev is None
     assert {c.handle: c.kind for c in res.changes} == {"a": "unchanged", "b": "unchanged"}
@@ -117,55 +146,71 @@ def test_baseline_is_by_measurement_time_not_run_start(tmp_path):
     run on 09-06 sits between the two dates: by run start the import is newer, by measurement it is
     older. The baseline goes by measurement, the same way core.measurements re-dates those rows."""
     st = Store(tmp_path / "x.db")
-    live1 = _run(st, "live", {"a": _summary(1_000, 1.0, 10.0)}, "2026-09-06T03:19:21+00:00", scope="partial")
-    imp = st.start_run("legacy-import", note="hand list", scope="full")
+    live1 = _run(st, "live", {"a": _summary(1_000, 1.0, 10.0)}, "2026-09-06T03:19:21+00:00")
+    imp = st.start_run("legacy-import", note="hand list", targets=["a"])
     st.save_measurement("a", imp, Summary(followers=900, posts_measured=20, range_start="2026-08-21", range_end="2026-09-05",
                                           median_likes=1, median_replies=1, median_reposts=1, median_views=100,
                                           engagement_rate=1.0, views_to_followers=10.0, tier=tier_for(900), days_since_last_post=1))
     st.conn.execute("UPDATE runs SET started_at='2026-09-07T02:24:51+00:00' WHERE run_id=?", (imp,))
     st.conn.execute("UPDATE measurements SET measured_at='2026-09-07T02:24:51+00:00' WHERE run_id=?", (imp,)); st.conn.commit()
-    live2 = _run(st, "live", {"a": _summary(1_100, 1.0, 10.0)}, "2026-09-18T02:07:45+00:00", scope="partial")
-    assert df.runs_with_measurements(st) == [live1, imp, live2]          # runs are ordered by when they ran…
+    live2 = _run(st, "live", {"a": _summary(1_100, 1.0, 10.0)}, "2026-09-18T02:07:45+00:00")
+    assert df.runs_with_measurements(st) == [imp, live1, live2]          # runs ordered by when their numbers were taken
     (c,) = df.compare(st, run_now=live2).changes
-    assert c.run_prev == live1 and c.followers_prev == 1_000             # …baselines by when the numbers were taken
+    assert c.run_prev == live1 and c.followers_prev == 1_000             # baselines the same way
     (c,) = df.compare(st, run_now=live1).changes
     assert c.run_prev == imp and c.followers_prev == 900                 # 09-05 hand numbers precede the 09-06 run
     assert [x.kind for x in df.compare(st, run_now=imp).changes] == ["new"]   # nothing was taken before 09-05
 
 
-def test_full_run_lists_tried_but_empty_accounts_as_dropped_except_screened_out(tmp_path):
+def test_a_screened_out_account_that_was_not_tried_is_not_dropped(tmp_path):
     st = Store(tmp_path / "x.db")
-    _run(st, "week 1", {"a": _summary(1_000, 1.0, 10.0), "b": _summary(2_000, 1.0, 10.0), "s": _summary(9, 1.0, 1.0)},
-         "2026-09-07T00:00:00+00:00")
-    st.set_status("s", "screened_out", "spam")             # deliberately excluded: not "dropped"
-    _run(st, "week 2", {"a": _summary(1_000, 1.0, 10.0)}, "2026-09-14T00:00:00+00:00", scope="full")
+    _run(st, "week 1", {"a": _summary(1_000, 1.0, 10.0), "s": _summary(9, 1.0, 1.0)}, "2026-09-07T00:00:00+00:00")
+    st.set_status("s", "screened_out", "spam")             # deliberately excluded: next run will not try it
+    _run(st, "week 2", {"a": _summary(1_000, 1.0, 10.0)}, "2026-09-14T00:00:00+00:00")
     res = df.compare(st)
-    assert {c.handle: c.kind for c in res.changes} == {"a": "unchanged", "b": "dropped"}
-    assert "came back empty" in df.report(res)
+    assert {c.handle: c.kind for c in res.changes} == {"a": "unchanged"}
+    # ...but if a run does try it and it is gone, that is a fact worth reporting
+    _run(st, "week 3", {"a": _summary(1_000, 1.0, 10.0)}, "2026-09-21T00:00:00+00:00", missing=["s"])
+    assert {c.handle: c.kind for c in df.compare(st).changes} == {"a": "unchanged", "s": "dropped"}
 
 
-def test_run_scope_is_decided_by_what_the_run_will_try():
-    from xmetrics.collect import run_scope_for
-    assert run_scope_for(["a", "b", "c"], ["a", "b", "c"]) == "full"      # first collection / --all
-    assert run_scope_for(["a"], ["a", "b", "c"]) == "partial"             # hand-picked subset
-    assert run_scope_for(["a", "b", "c", "z"], ["a", "b", "c"]) == "full" # extra new handles don't make it partial
-    assert run_scope_for([], []) == "full"
+def test_a_run_declares_its_targets_and_a_dead_run_leaves_them_pending(tmp_path):
+    st = Store(tmp_path / "x.db")
+    r = st.start_run("playwright", targets=["@A", "b"])
+    assert st.run_targets(r) == {"a": "pending", "b": "pending"}
+    st.upsert_account("a"); st.save_measurement("a", r, _summary(1_000, 1.0, 10.0))
+    assert st.run_targets(r) == {"a": "measured", "b": "pending"}       # the run died before "b"
+    st.mark_target(r, "c", "error", "late addition")                    # a handle named mid-run is registered
+    assert st.run_targets(r)["c"] == "error"
+    with pytest.raises(ValueError):
+        st.mark_target(r, "b", "vanished")
 
 
-def test_old_store_files_get_a_scope_column_defaulting_to_full(tmp_path):
+def test_old_store_files_get_run_targets_reconstructed_from_measurements(tmp_path):
+    """A file from before run_targets (and one with the short-lived runs.scope column) opens
+    cleanly: targets = what was measured, all 'measured', scope gone. Nothing is invented."""
     db = tmp_path / "old.db"
     con = sqlite3.connect(db)
     con.executescript("""
       CREATE TABLE accounts (handle TEXT PRIMARY KEY, display TEXT, bio TEXT, bio_url TEXT, dm_open INTEGER, niche TEXT,
         niche_source TEXT, fit_note TEXT, hook_link TEXT, hook_note TEXT, status TEXT NOT NULL DEFAULT 'pending',
         screen_reason TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
-      CREATE TABLE runs (run_id TEXT PRIMARY KEY, started_at TEXT NOT NULL, finished_at TEXT, source TEXT NOT NULL, note TEXT);
-      INSERT INTO runs VALUES ('r1', '2026-09-07T00:00:00+00:00', NULL, 'playwright', NULL);
+      CREATE TABLE runs (run_id TEXT PRIMARY KEY, started_at TEXT NOT NULL, finished_at TEXT, source TEXT NOT NULL, note TEXT,
+        scope TEXT NOT NULL DEFAULT 'full');
+      CREATE TABLE measurements (handle TEXT NOT NULL, run_id TEXT NOT NULL, measured_at TEXT NOT NULL, followers INTEGER NOT NULL,
+        posts_measured INTEGER NOT NULL, range_start TEXT, range_end TEXT, median_likes REAL, median_replies REAL,
+        median_reposts REAL, median_views REAL, engagement_rate REAL NOT NULL, views_to_followers REAL NOT NULL,
+        tier TEXT NOT NULL, days_since_last_post INTEGER, PRIMARY KEY (handle, run_id));
+      INSERT INTO accounts (handle, status, created_at, updated_at) VALUES ('a', 'measured', 't', 't'), ('b', 'measured', 't', 't');
+      INSERT INTO runs VALUES ('r1', '2026-09-07T00:00:00+00:00', NULL, 'playwright', NULL, 'full');
+      INSERT INTO measurements VALUES ('a', 'r1', '2026-09-07T00:00:01+00:00', 1000, 20, NULL, NULL, 1, 1, 1, 100, 1.0, 10.0, 'Micro (<25K)', 1);
     """); con.commit(); con.close()
     st = Store(db)
-    assert st.run_scope("r1") == "full"
-    with pytest.raises(ValueError):
-        st.start_run("playwright", scope="everything")
+    assert "scope" not in {r["name"] for r in st.conn.execute("PRAGMA table_info(runs)")}
+    assert st.run_targets("r1") == {"a": "measured"}                    # "b" was not measured: we do not claim it was tried
+    assert st.conn.execute("SELECT detail FROM run_targets").fetchone()[0] == Store.BACKFILL_NOTE
+    Store(db)                                                           # opening again changes nothing
+    assert st.conn.execute("SELECT count(*) FROM run_targets").fetchone()[0] == 1
 
 
 def test_one_run_is_not_a_comparison(tmp_path):
@@ -192,7 +237,7 @@ def test_report_orders_dropped_new_flagged_and_lists_the_rest(two_runs):
     txt = df.report(res)
     assert "2 flagged | 1 new | 1 dropped | 2 unchanged of 6" in txt
     assert "@growing" in txt and "Micro (<25K) → Mid (25-100K)" in txt
-    assert "## Not measured this run" in txt and "@gone" in txt
+    assert "## Dropped — went looking" in txt and "@gone" in txt
     assert "## Within thresholds (2)" in txt and "@quiet" in txt
 
 

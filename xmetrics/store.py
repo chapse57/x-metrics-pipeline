@@ -1,7 +1,11 @@
-"""SQLite store. One file, four tables, idempotent writes.
+"""SQLite store. One file, six tables, idempotent writes.
 
 accounts      one row per handle (identity + bio + contact)
 runs          one row per collection run (for resume + audit)
+run_targets   one row per (run, account) the run set out to measure, with what became of it:
+              pending (never reached) | measured | missing (account gone/suspended) | error
+              (we got there and could not read it). This is what lets a change report say
+              "dropped" only about accounts we actually went looking for.
 measurements  one row per (account, run): the medians and rates that go to the client
 posts         raw per-post counts behind each measurement (re-computable evidence)
 agent_audit   every LLM classification attempt, with which guardrail passed/failed
@@ -13,7 +17,7 @@ import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator
+from typing import Iterable, Iterator
 
 from .metrics import Post, Summary
 from .parse import normalize_handle
@@ -40,10 +44,15 @@ CREATE TABLE IF NOT EXISTS runs (
   started_at TEXT NOT NULL,
   finished_at TEXT,
   source     TEXT NOT NULL,                -- 'playwright' | 'legacy-import'
-  note       TEXT,
-  scope      TEXT NOT NULL DEFAULT 'full'  -- 'full': tried every active account, so an account
-                                           --   missing from this run is a signal (dropped)
-                                           -- 'partial': tried a named subset; missing = not tried
+  note       TEXT
+);
+CREATE TABLE IF NOT EXISTS run_targets (
+  run_id     TEXT NOT NULL REFERENCES runs(run_id),
+  handle     TEXT NOT NULL,
+  outcome    TEXT NOT NULL DEFAULT 'pending',  -- pending | measured | missing | error
+  detail     TEXT,                             -- error message, or why the account is missing
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (run_id, handle)
 );
 CREATE TABLE IF NOT EXISTS measurements (
   handle            TEXT NOT NULL REFERENCES accounts(handle),
@@ -98,14 +107,26 @@ class Store:
         self.conn.executescript(SCHEMA)
         self._migrate()
 
+    BACKFILL_NOTE = "backfilled: runs before run_targets existed recorded only what they measured"
+
     def _migrate(self) -> None:
-        """Columns added after a table already existed in someone's file. Each is guarded, so
-        opening an old file upgrades it once and opening a new one does nothing."""
+        """Upgrades for files written by an older version. Each step is guarded, so opening an
+        old file upgrades it once and opening a new one does nothing."""
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(runs)")}
-        if "scope" not in cols:
-            # 'full' is what every run was before scope existed (absence counted as dropped)
-            self.conn.execute("ALTER TABLE runs ADD COLUMN scope TEXT NOT NULL DEFAULT 'full'")
-            self.conn.commit()
+        if "scope" in cols:
+            # runs.scope (a one-word summary: full/partial) was replaced by run_targets, one row per
+            # account tried. Two sources of truth is how the 92-dropped bug got hand-patched.
+            self.conn.execute("ALTER TABLE runs DROP COLUMN scope")
+        # Runs from before run_targets existed did not record what they set out to measure, only
+        # what they measured. The honest reconstruction is targets = measured, all 'measured':
+        # nothing is called missing or unreached for a run we cannot know that about.
+        self.conn.execute(
+            """INSERT OR IGNORE INTO run_targets (run_id, handle, outcome, detail, updated_at)
+               SELECT m.run_id, m.handle, 'measured', ?, m.measured_at
+               FROM measurements m
+               WHERE NOT EXISTS (SELECT 1 FROM run_targets t WHERE t.run_id = m.run_id)""",
+            (self.BACKFILL_NOTE,))
+        self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
@@ -148,16 +169,9 @@ class Store:
         return [r["handle"] for r in self.conn.execute("SELECT handle FROM accounts WHERE status='pending' ORDER BY created_at")]
 
     def active_handles(self) -> list[str]:
-        """Every account we still track: anything not screened out. A run that tries all of
-        these is a 'full' run."""
+        """Every account we still track: anything not screened out (what `collect --all` tries)."""
         return [r["handle"] for r in self.conn.execute(
             "SELECT handle FROM accounts WHERE status != 'screened_out' ORDER BY created_at")]
-
-    def run_scope(self, run_id: str) -> str:
-        row = self.conn.execute("SELECT scope FROM runs WHERE run_id=?", (run_id,)).fetchone()
-        if row is None:
-            raise KeyError(run_id)
-        return row["scope"]
 
     def set_status(self, handle: str, status: str, reason: str | None = None) -> None:
         with self.tx() as c:
@@ -165,12 +179,13 @@ class Store:
                       (status, reason, utcnow(), normalize_handle(handle)))
 
     # ---- runs -----------------------------------------------------------
-    def start_run(self, source: str, note: str | None = None, scope: str = "full") -> str:
-        """scope='full' means this run tries every active account, so an account that comes back
-        without a measurement was dropped or failed. 'partial' means a named subset was tried and
-        absence says nothing. diff.compare only reports 'dropped' after a full run."""
-        if scope not in ("full", "partial"):
-            raise ValueError(f"scope must be 'full' or 'partial', got {scope!r}")
+    OUTCOMES = ("pending", "measured", "missing", "error")
+
+    def start_run(self, source: str, note: str | None = None, targets: Iterable[str] = ()) -> str:
+        """Open a run and record what it is about to try. Every target starts 'pending'; the
+        collector (or save_measurement) moves it to measured / missing / error as it goes, so a
+        run that dies half-way leaves the truth behind: which accounts it never reached."""
+        targets = [normalize_handle(h) for h in targets]
         base = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + source
         run_id, n = base, 1
         with self.tx() as c:
@@ -179,9 +194,28 @@ class Store:
             while c.execute("SELECT 1 FROM runs WHERE run_id=?", (run_id,)).fetchone():
                 n += 1
                 run_id = f"{base}-{n}"
-            c.execute("INSERT INTO runs (run_id, started_at, source, note, scope) VALUES (?,?,?,?,?)",
-                      (run_id, utcnow(), source, note, scope))
+            now = utcnow()
+            c.execute("INSERT INTO runs (run_id, started_at, source, note) VALUES (?,?,?,?)",
+                      (run_id, now, source, note))
+            c.executemany("INSERT OR IGNORE INTO run_targets (run_id, handle, outcome, updated_at) VALUES (?,?,'pending',?)",
+                          [(run_id, h, now) for h in targets])
         return run_id
+
+    def mark_target(self, run_id: str, handle: str, outcome: str, detail: str | None = None) -> None:
+        """What became of one account in one run. Registers the target if the run did not
+        declare it up front (an explicitly named handle added mid-way)."""
+        if outcome not in self.OUTCOMES:
+            raise ValueError(f"outcome must be one of {self.OUTCOMES}, got {outcome!r}")
+        with self.tx() as c:
+            c.execute("INSERT INTO run_targets (run_id, handle, outcome, detail, updated_at) VALUES (?,?,?,?,?) "
+                      "ON CONFLICT(run_id, handle) DO UPDATE SET outcome=excluded.outcome, detail=excluded.detail, "
+                      "updated_at=excluded.updated_at",
+                      (run_id, normalize_handle(handle), outcome, detail, utcnow()))
+
+    def run_targets(self, run_id: str) -> dict[str, str]:
+        """handle -> outcome for one run."""
+        return {r["handle"]: r["outcome"] for r in self.conn.execute(
+            "SELECT handle, outcome FROM run_targets WHERE run_id=? ORDER BY handle", (run_id,))}
 
     def finish_run(self, run_id: str) -> None:
         with self.tx() as c:
@@ -198,6 +232,9 @@ class Store:
                  s.median_likes, s.median_replies, s.median_reposts, s.median_views,
                  s.engagement_rate, s.views_to_followers, s.tier, s.days_since_last_post),
             )
+            c.execute("INSERT INTO run_targets (run_id, handle, outcome, updated_at) VALUES (?,?,'measured',?) "
+                      "ON CONFLICT(run_id, handle) DO UPDATE SET outcome='measured', detail=NULL, updated_at=excluded.updated_at",
+                      (run_id, h, utcnow()))
             for p in posts or []:
                 c.execute(
                     "INSERT OR REPLACE INTO posts VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",

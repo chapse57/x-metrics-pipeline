@@ -15,7 +15,7 @@ export XMETRICS_PG_DSN=postgresql://xmetrics:xmetrics@localhost:5432/xmetrics
 python -m pg.migrate                                   # idempotent; a ledger in pg.schema_migrations
 python -m pg.load out/x_legacy_claude.db out/x.db      # idempotent; ON CONFLICT DO UPDATE on the SQLite keys
 python -m pg.load --run 20260918T020745Z-playwright out/x.db    # one run, for re-processing
-python -m pytest tests/test_pg.py -q                   # 9 tests; skipped when the DSN is not set
+python -m pytest tests/test_pg.py -q                   # 12 tests; skipped when the DSN is not set
 ```
 
 ## What the tests prove
@@ -45,12 +45,24 @@ end of their measurement window (`range_end`, 2026-08-25 … 09-03) and keeps th
 `recorded_at`; `raw` is untouched. Without this, `v_freshness` would call two-week-old data
 "from September 7".
 
-## Known limit: partial runs
+## Run targets, or what "dropped" means
 
-`v_changes` compares the two most recent runs *as sets of accounts*, exactly as `diff.py` does.
-After loading the legacy baseline (95 accounts) and the 2026-09-18 live run (3 accounts), the
-view reports 3 changed and **92 dropped** — correct by the definition, useless on a dashboard.
-The definition assumes every run measures the whole list. Re-measuring 20 accounts next week
-will show 75 "dropped" the same way. Options, not yet decided: compare each account's last two
-measurements regardless of run (loses `new`/`dropped`), or mark runs as full or partial and only
-diff full ones against each other. `diff.py` and `mart.changes` must change together.
+`raw.run_targets` holds one row per account a run set out to measure and what became of it
+(`pending` · `measured` · `missing` · `error`). `mart.changes_since(run)` compares every account
+the run measured with that account's own previous measurement, and reports "dropped" only for
+targets that came back `missing` and had something to lose. `mart.v_run_status` counts the four
+outcomes per run and says whether the run was complete; `mart.v_runs` orders runs by when their
+numbers were taken. The reasoning, and the history of the summary column this replaced, is at the
+top of `schema/004_run_targets.sql` and in the main README's "What changed" section.
+
+On the real data — a 95-account import, then a 3-account live run — `mart.v_changes` reports
+3 changed and 0 dropped, by data, not by hand: the live run recorded 3 targets, so it says nothing
+about the other 92.
+
+## Migrations are applied once
+
+`pg/migrate.py` keeps a ledger (`pg.schema_migrations`) and skips files already in it, so a file
+that has been applied anywhere is never edited — a change is a new numbered file, which is why
+`004` drops and recreates what `002` made rather than editing `002`. `tests/test_pg.py` asserts
+that a second `migrate` applies nothing and leaves every object as it was; it does not, and need
+not, prove that any single file could be re-run by hand.

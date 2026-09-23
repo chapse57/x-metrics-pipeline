@@ -78,7 +78,7 @@ def test_migrate_is_idempotent(conn):
     assert object_inventory(conn) == before
     ledger = conn.execute("SELECT filename, runs FROM pg.schema_migrations ORDER BY 1").fetchall()
     assert ledger == [(p.name, 1) for p in migration_files()]
-    assert "002_run_scope.sql" in {f for f, _ in ledger}
+    assert {"002_run_scope.sql", "004_run_targets.sql"} <= {f for f, _ in ledger}
 
 
 # ------------------------------------------------------------------ 2. load counts --
@@ -148,15 +148,15 @@ def merged_store(tmp_path) -> Store:
     measurements keyed by run, accounts by handle with the newer updated_at winning), so Python
     can compute the baseline report over the same data Postgres holds."""
     st = Store(tmp_path / "merged.db")
-    rows = {t: [] for t in ("runs", "accounts", "measurements")}
+    rows = {t: [] for t in ("runs", "accounts", "measurements", "run_targets")}
     for path in SQLITE_FILES:
-        src = Store(path)                       # opening upgrades an old file (adds runs.scope)
+        src = Store(path)                       # opening upgrades an old file (reconstructs run_targets)
         for t in rows:
             rows[t] += [dict(r) for r in src.conn.execute(f"SELECT * FROM {t}")]
         src.close()
     rows["accounts"].sort(key=lambda a: a["updated_at"])
     with st.tx() as c:
-        for t in ("runs", "accounts", "measurements"):
+        for t in ("runs", "accounts", "measurements", "run_targets"):
             for r in rows[t]:
                 cols = ", ".join(r); marks = ", ".join("?" * len(r))
                 c.execute(f"INSERT OR REPLACE INTO {t} ({cols}) VALUES ({marks})", list(r.values()))
@@ -210,7 +210,8 @@ def test_sql_changes_equal_python_changes_with_custom_thresholds(conn):
 @pytest.mark.skipif(not SQLITE_FILES, reason="no out/*.db to load")
 def test_sql_baseline_changes_equal_python_for_every_run(conn, tmp_path):
     """The rule the dashboard reads — each account vs its own previous measurement, dropped only
-    after a full run — computed in SQL over the merged database equals Python over a merged copy."""
+    when it was looked for and missing — computed in SQL over the merged database equals Python
+    over a merged copy."""
     from pg.load import load
     for path in SQLITE_FILES:
         load(conn, path)
@@ -231,29 +232,80 @@ def test_sql_baseline_changes_equal_python_for_every_run(conn, tmp_path):
 
 @pytest.mark.skipif(not SQLITE_FILES, reason="no out/*.db to load")
 def test_v_changes_is_the_latest_run_against_baselines(conn, tmp_path):
-    latest, scope = conn.execute("SELECT run_id, scope FROM mart.v_runs WHERE recency = 1").fetchone()
+    latest, complete = conn.execute("SELECT run_id, complete FROM mart.v_runs WHERE recency = 1").fetchone()
     view = conn.execute("SELECT * FROM mart.v_changes").fetchall()
     fn = conn.execute("SELECT * FROM mart.changes_since(%s)", (latest,)).fetchall()
     assert view == fn and view
     st = merged_store(tmp_path)
     py = df.compare(st)
     st.close()
-    assert py.run_now == latest and py.scope == scope
+    assert py.run_now == latest and py.complete == complete
     assert [dict(zip(COLUMNS, r)) for r in view] == [asdict(c) for c in py.changes]
-    # the bug this migration exists for: a partial run must not report the accounts it did not try
-    if scope == "partial":
-        assert not [r for r in view if r[COLUMNS.index("kind")] == "dropped"]
+    # the bug 002 and 004 exist for: on the real data (a 3-account live run after a 95-account
+    # import) nothing is "dropped", because nobody went looking for the other 92
+    assert not [r for r in view if r[COLUMNS.index("kind")] == "dropped"]
 
 
-def test_scope_is_loaded_and_constrained(conn):
-    scopes = dict(conn.execute("SELECT source, min(scope) FROM raw.runs GROUP BY source").fetchall())
-    assert set(scopes.values()) <= {"full", "partial"}
-    if "legacy-import" in scopes:
-        assert scopes["legacy-import"] == "full"
+def test_run_targets_are_loaded_or_reconstructed_and_constrained(conn):
+    """Every run with measurements has targets; files from before run_targets get them
+    reconstructed (targets = measured) exactly as xmetrics.store does, so both sides agree."""
+    from xmetrics.store import Store as S
+    rows = conn.execute("""
+        SELECT r.run_id, count(m.handle), count(t.handle) FILTER (WHERE t.outcome = 'measured'),
+               bool_and(t.detail = %s)
+        FROM raw.runs r
+        JOIN raw.measurements m ON m.run_id = r.run_id
+        LEFT JOIN raw.run_targets t ON t.run_id = r.run_id AND t.handle = m.handle
+        GROUP BY r.run_id""", (S.BACKFILL_NOTE,)).fetchall()
+    assert rows
+    for run_id, measured, targeted, backfilled in rows:
+        assert measured == targeted, run_id                       # every measurement has a 'measured' target
+        assert backfilled is not None
+    status = {r[0]: r for r in conn.execute(
+        "SELECT run_id, targets, measured, missing, failed, not_reached, complete FROM mart.v_run_status").fetchall()}
+    for run_id, *_ in rows:
+        assert status[run_id][6] is True                          # nothing pending: a reconstructed run is complete
     with pytest.raises(psycopg.errors.CheckViolation):
         with conn.transaction():
-            conn.execute("INSERT INTO raw.runs (run_id, started_at, source, scope, source_db) "
-                         "VALUES ('x', now(), 'playwright', 'everything', 'test')")
+            conn.execute("INSERT INTO raw.run_targets (run_id, handle, outcome, updated_at) "
+                         "VALUES (%s, 'x', 'vanished', now())", (rows[0][0],))
+    assert "scope" not in {r[0] for r in conn.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_schema='raw' AND table_name='runs'")}
+
+
+def test_missing_failed_and_unreached_targets_mean_three_different_things(conn, tmp_path):
+    """A synthetic history with every outcome, loaded into the same database: SQL and Python
+    agree row for row, only 'missing' becomes 'dropped', and the run status says the run was
+    incomplete. Cleaned up afterwards so the real-data tests are unaffected."""
+    from pg.load import load
+    from tests.test_diff import _run, _summary
+    st = Store(tmp_path / "synthetic.db")
+    r1 = _run(st, "s1", {f"syn_{h}": _summary(1_000, 1.0, 10.0) for h in "abcd"}, "2026-01-01T00:00:00+00:00")
+    r2 = _run(st, "s2", {"syn_a": _summary(1_000, 1.0, 10.0)}, "2026-01-08T00:00:00+00:00",
+              missing=["syn_b"], error=["syn_c"], pending=["syn_d"])
+    r3 = _run(st, "s3", {"syn_d": _summary(1_200, 1.0, 10.0)}, "2026-01-15T00:00:00+00:00",   # d's baseline is r1
+              missing=["syn_zzz"])                                                            # never measured: not reported
+    try:
+        res = load(conn, st.path)
+        assert res.targets == 4 + 4 + 2
+        for r in (r1, r2, r3):
+            py = [asdict(c) for c in df.compare(st, run_now=r).changes]
+            sql = [dict(zip(COLUMNS, x)) for x in conn.execute("SELECT * FROM mart.changes_since(%s)", (r,)).fetchall()]
+            assert sql == py, r
+        kinds = {c.handle: c.kind for c in df.compare(st, run_now=r2).changes}
+        assert kinds == {"syn_a": "unchanged", "syn_b": "dropped"}
+        status = conn.execute("SELECT targets, measured, missing, failed, not_reached, complete "
+                              "FROM mart.v_run_status WHERE run_id = %s", (r2,)).fetchone()
+        assert status == (4, 1, 1, 1, 1, False)
+        (d,) = df.compare(st, run_now=r3).changes
+        assert d.handle == "syn_d" and d.run_prev == r1 and d.followers_delta == 200
+    finally:
+        st.close()
+        with conn.transaction():
+            for t in ("run_targets", "measurements", "posts"):
+                conn.execute(f"DELETE FROM raw.{t} WHERE run_id IN (%s, %s, %s)", (r1, r2, r3))
+            conn.execute("DELETE FROM raw.runs WHERE run_id IN (%s, %s, %s)", (r1, r2, r3))
+            conn.execute("DELETE FROM raw.accounts WHERE handle LIKE 'syn\\_%%'")
 
 
 # ------------------------------------------------------------- 5. rounding rule --

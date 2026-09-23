@@ -31,10 +31,11 @@ class LoadResult:
     accounts: int
     measurements: int
     posts: int
+    targets: int = 0
 
     def __str__(self) -> str:
         return (f"{self.source_db}: runs {self.runs}, accounts {self.accounts}, "
-                f"measurements {self.measurements}, posts {self.posts}")
+                f"measurements {self.measurements}, posts {self.posts}, targets {self.targets}")
 
 
 def _ts(s: str | None) -> datetime | None:
@@ -51,12 +52,19 @@ def _rows(sq: sqlite3.Connection, sql: str, params: tuple = ()) -> list[sqlite3.
 
 
 _UPSERT_RUN = """
-INSERT INTO raw.runs (run_id, started_at, finished_at, source, note, scope, source_db)
-VALUES (%s, %s, %s, %s, %s, %s, %s)
+INSERT INTO raw.runs (run_id, started_at, finished_at, source, note, source_db)
+VALUES (%s, %s, %s, %s, %s, %s)
 ON CONFLICT (run_id) DO UPDATE SET
   started_at = EXCLUDED.started_at, finished_at = EXCLUDED.finished_at,
-  source = EXCLUDED.source, note = EXCLUDED.note, scope = EXCLUDED.scope,
+  source = EXCLUDED.source, note = EXCLUDED.note,
   source_db = EXCLUDED.source_db, loaded_at = now()
+"""
+
+_UPSERT_TARGET = """
+INSERT INTO raw.run_targets (run_id, handle, outcome, detail, updated_at)
+VALUES (%s, %s, %s, %s, %s)
+ON CONFLICT (run_id, handle) DO UPDATE SET
+  outcome = EXCLUDED.outcome, detail = EXCLUDED.detail, updated_at = EXCLUDED.updated_at, loaded_at = now()
 """
 
 _UPSERT_ACCOUNT = """
@@ -116,14 +124,15 @@ def load(conn: psycopg.Connection, sqlite_path: str | Path, run_id: str | None =
         raise ValueError(f"run {run_id!r} not in {src}")
     accounts = _rows(sq, "SELECT * FROM accounts")
     measurements = _rows(sq, f"SELECT * FROM measurements {run_filter}", run_params)
+    targets = _targets(sq, run_filter, run_params)
     posts = _rows(sq, f"SELECT * FROM posts {run_filter}", run_params)
 
     with conn.transaction(), conn.cursor() as cur:
         cur.executemany(_UPSERT_RUN, [
-            (r["run_id"], _ts(r["started_at"]), _ts(r["finished_at"]), r["source"], r["note"],
-             r["scope"] if "scope" in r.keys() else "full",   # a file written before runs.scope existed
-             src)
+            (r["run_id"], _ts(r["started_at"]), _ts(r["finished_at"]), r["source"], r["note"], src)
             for r in runs])
+        cur.executemany(_UPSERT_TARGET, [
+            (t["run_id"], t["handle"], t["outcome"], t["detail"], _ts(t["updated_at"])) for t in targets])
         cur.executemany(_UPSERT_ACCOUNT, [
             (a["handle"], a["display"], a["bio"], a["bio_url"], a["dm_open"], a["niche"], a["niche_source"],
              a["fit_note"], a["hook_link"], a["hook_note"], a["status"], a["screen_reason"],
@@ -140,7 +149,24 @@ def load(conn: psycopg.Connection, sqlite_path: str | Path, run_id: str | None =
              p["likes"], p["bookmarks"], p["views"], p["is_repost"], p["is_pinned"], p["is_reply"], p["raw_label"])
             for p in posts])
     sq.close()
-    return LoadResult(src, len(runs), len(accounts), len(measurements), len(posts))
+    return LoadResult(src, len(runs), len(accounts), len(measurements), len(posts), len(targets))
+
+
+def _targets(sq: sqlite3.Connection, run_filter: str, run_params: tuple) -> list[sqlite3.Row]:
+    """run_targets rows — or, for a file written before that table existed, the same
+    reconstruction xmetrics.store makes when it opens such a file: targets = what was measured,
+    all 'measured'. Both sides must agree, or the SQL == Python test would compare two different
+    histories."""
+    from xmetrics.store import Store
+    has_table = sq.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='run_targets'").fetchone()
+    recorded = _rows(sq, f"SELECT * FROM run_targets {run_filter}", run_params) if has_table else []
+    covered = {r["run_id"] for r in recorded}
+    # runs with measurements but no target rows (a pre-run_targets file, or a run whose targets
+    # were never written) get the reconstruction; runs with recorded targets keep them as recorded
+    reconstructed = _rows(sq, f"""SELECT m.run_id, m.handle, 'measured' AS outcome, ? AS detail, m.measured_at AS updated_at
+                                  FROM measurements m {run_filter} ORDER BY m.run_id, m.handle""",
+                          (Store.BACKFILL_NOTE, *run_params))
+    return list(recorded) + [r for r in reconstructed if r["run_id"] not in covered]
 
 
 def main(argv: list[str] | None = None) -> int:

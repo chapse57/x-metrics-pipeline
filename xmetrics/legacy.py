@@ -42,12 +42,13 @@ def import_screened_out(store: Store, csv_path: str | Path) -> int:
 def import_jsonl(store: Store, path: str | Path, *, as_of: datetime | None = None,
                  screened_csv: str | Path | None = None) -> str:
     as_of = as_of or datetime.now(timezone.utc)
-    run_id = store.start_run("legacy-import", note=str(path), scope="full")  # the whole delivered list
+    lines = [json.loads(l) for l in Path(path).read_text(encoding="utf-8").splitlines() if l.strip()]
+    # targets = every account the hand-made deliverable measured; the screened-out lines were
+    # excluded by a person before measuring, so they were never "tried"
+    run_id = store.start_run("legacy-import", note=str(path),
+                             targets=[j["handle"] for j in lines if not j.get("EXCLUDED")])
     n = 0
-    for line in Path(path).read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        j = json.loads(line)
+    for j in lines:
         if j.get("EXCLUDED"):  # hand-screened line: {"handle","EXCLUDED":true,"reason"}
             store.upsert_account(j["handle"])
             store.set_status(j["handle"], "screened_out", j.get("reason") or "screened out (legacy)")

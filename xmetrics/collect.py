@@ -99,13 +99,6 @@ def is_logged_in(page) -> bool:
     return bool(page.evaluate(_JS_LOGGED_IN))
 
 
-def run_scope_for(todo: list[str], active: list[str]) -> str:
-    """'full' when this run will try every account we track, 'partial' when it tries a subset.
-    Decided from what is about to be measured, not from a flag, so it cannot be mis-declared:
-    the first collection and `--all` come out full; a hand-picked list comes out partial."""
-    return "full" if set(active) <= set(todo) else "partial"
-
-
 class Collector:
     def __init__(self, store: Store, profile_dir: str | Path, *, headless: bool = False,
                  posts_per_account: int = 20, max_scrolls: int = 30, record_dir: str | Path | None = None):
@@ -132,9 +125,11 @@ class Collector:
         if not todo:
             log.info("nothing pending — pass handles to (re)measure, or check `xmetrics status`")
             return ""
-        scope = run_scope_for(todo, self.store.active_handles())
-        run_id = self.store.start_run("playwright", note, scope=scope)
-        log.info("run %s: %d account(s), scope=%s", run_id, len(todo), scope)
+        # The run declares what it is about to try before it tries anything. If it dies half-way,
+        # the accounts it never reached stay 'pending' in run_targets — so a change report can
+        # never mistake "we did not get there" for "the account is gone".
+        run_id = self.store.start_run("playwright", note, targets=todo)
+        log.info("run %s: %d account(s) to try", run_id, len(todo))
         with sync_playwright() as p:
             launch_kw = {"headless": self.headless, "locale": "en-US", "viewport": {"width": 1280, "height": 900}}
             if self.record_dir:
@@ -151,6 +146,7 @@ class Collector:
                 except CollectError as e:
                     log.warning("@%s error: %s", h, e)
                     self.store.set_status(h, "error", str(e))
+                    self.store.mark_target(run_id, h, "error", str(e))   # we got there; could not read it
                 _sleep(2.5, 6.0)  # between accounts
             ctx.close()
         self.store.finish_run(run_id)
@@ -181,6 +177,7 @@ class Collector:
         self._goto(page, f"https://x.com/{handle}")
         if page.locator('text="This account doesn’t exist"').count() or page.locator('text="Account suspended"').count():
             self.store.set_status(handle, "screened_out", "account missing/suspended")
+            self.store.mark_target(run_id, handle, "missing", "account missing/suspended")  # went looking; not there
             return
         f_text = page.evaluate(_JS_FOLLOWERS)
         if not f_text:

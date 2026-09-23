@@ -97,17 +97,30 @@ Confidence would have shipped it. The full answer, and the second error inside i
 One measurement says what an account is like. Two say what moved — which is the question a
 weekly retainer actually pays for. `diff` compares the latest run with what came before it, by one rule:
 
-> **Each account is compared with its own previous measurement, and an account counts as
-> "dropped" only when a run that was meant to cover it came back without it.**
+> **Each account is compared with its own previous measurement, and an account is reported
+> "dropped" only when we went looking for it and it was not there.**
+
+Or, as it is said to a client: *"This dashboard never reports an account as gone unless we actually
+went looking for it and it wasn't there. If we didn't look, it says so."*
 
 Not "this run vs the previous run". Runs do not all cover the same accounts — a weekly run may
 re-measure 20 of 95, a first live run was 3 — and comparing two runs as whole sets called 92 accounts
-"dropped" that nobody had dropped; they were not tried. So every run records its **scope**: `full` when
-it tried every tracked account (the first collection, `collect --all`, the legacy import), `partial` when
-it tried a named list. The collector decides that from what it is about to measure, not from a flag.
-After a partial run, accounts it did not try are simply not in the report; after a full run, a tracked
-account that came back empty is. `diff RUN_A RUN_B` with both runs named still compares exactly those
-two as whole sets, for when that is the question.
+"dropped" that nobody had dropped; they were not tried. The first fix was a one-word summary per run
+(`scope`: full or partial). It was decided from one file's account list, so the same 3-account run was
+"full" alone and wrong once merged with the 148-account import, and the value ended up hand-patched.
+A summary column invites that. What replaced it is `run_targets`: **one row per account a run set out to
+measure, with what became of it** — `measured`, `missing` (we got there; the account is gone or
+suspended), `error` (we got there; could not read it), or still `pending` (the run died first). Two of
+those are facts about the account, two about the collector, and the report keeps them apart: only
+`missing` becomes "dropped", and only if the account had a previous measurement to lose; `error` and
+`pending` are named in the report and turn the run's `complete` flag off, never into a change. Accounts a
+run did not try are not in its report at all — their last number stands, and its age is on the freshness
+view. `diff RUN_A RUN_B` with both runs named still compares exactly those two as whole sets, for when
+that is the question.
+
+Runs from before `run_targets` existed recorded only what they measured; opening such a file
+reconstructs targets = measured, all `measured`. Nothing is called missing or unreached for a run we
+cannot know that about.
 
 First real pair, the 3 accounts of the 2026-09-06 live run re-measured on 2026-09-18 (12 days, 32 s;
 untouched outputs in `docs/live-run-2026-09-18/`):
@@ -170,7 +183,9 @@ are `diff.compare` line for line, and `mart.v_changes` is the latest run's repor
 asserts the SQL rows equal the Python rows, every column, for every run in the real database. That is
 the point of the layer: the dashboard and the weekly Slack line cannot disagree, because they are the
 same function. `mart.v_latest`, `mart.v_freshness` (how old each account's number is, so a card can turn
-red) and `mart.v_runs` (with scope) are the other three views a first dashboard needs.
+red) `mart.v_runs` (newest first by when the numbers were taken) and `mart.v_run_status` (targets · measured ·
+missing · failed · not reached · complete, per run — what `/health` will read) are the other views a first
+dashboard needs.
 
 ## Live run (2026-09-06, Windows, logged-in session) — evidence in `docs/live-run-2026-09-06/`
 
@@ -235,8 +250,8 @@ python -m xmetrics.cli --db out/x.db run --out out --strict
 # -> out/influencers.csv  out/dashboard.html  out/validation_report.md  out/agent_audit.json
 
 # 5. next week: re-measure and see what moved
-python -m xmetrics.cli --db out/x.db collect --all              # every tracked account (a full run) …
-python -m xmetrics.cli --db out/x.db collect handle1 handle2    # … or a named list (a partial run)
+python -m xmetrics.cli --db out/x.db collect --all              # every tracked account …
+python -m xmetrics.cli --db out/x.db collect handle1 handle2    # … or a named list; either way the run records what it tried
 python -m xmetrics.cli --db out/x.db diff --out out            # -> out/changes.md  out/changes.json
 ```
 
@@ -287,7 +302,7 @@ It is five regexes, and that is deliberate. Its job is not to detect spam well; 
 ```
 xmetrics/   parse · metrics · store · legacy · validate · agent · export · diff · collect · cli
 pg/         PostgreSQL: docker-compose · migrate (schema/001-003) · load (SQLite -> raw) · raw / core / mart
-tests/      70 test cases in 56 test functions, parametrize expanded (parser formats, metrics, legacy cross-check, guardrails, diff rule + thresholds, rounding, SQL == Python)
+tests/      73 test cases in 59 test functions, parametrize expanded (parser formats, metrics, legacy cross-check, guardrails, diff rule + run targets + thresholds, rounding, SQL == Python)
 fixtures/   captured aria-labels + the real 2026-09 deliverable
 out/        generated: CSV, dashboard, validation report, agent audit
 mcp_server.py  ·  n8n/  ·  .github/workflows/weekly.yml
