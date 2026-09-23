@@ -10,12 +10,13 @@ a Python script can read it: a dashboard, an API, another team's tool. Three sch
 | `mart` | what a dashboard reads: `v_latest`, `v_changes`, `v_freshness`, `v_runs` | views only, nothing stored |
 
 ```
-docker compose -f pg/docker-compose.yml up -d
+docker compose up -d postgres                          # or `docker compose up -d --build` for the whole stack
 export XMETRICS_PG_DSN=postgresql://xmetrics:xmetrics@localhost:5432/xmetrics
 python -m pg.migrate                                   # idempotent; a ledger in pg.schema_migrations
 python -m pg.load out/x_legacy_claude.db out/x.db      # idempotent; ON CONFLICT DO UPDATE on the SQLite keys
 python -m pg.load --run 20260918T020745Z-playwright out/x.db    # one run, for re-processing
-python -m pytest tests/test_pg.py -q                   # 12 tests; skipped when the DSN is not set
+python -m pg.roles reader --user xmetrics_api --password ...   # read-only login for api/ (pg/schema/005)
+python -m pytest tests/test_pg.py tests/test_api.py -q  # 12 + 7 tests; skipped when the DSN is not set
 ```
 
 ## What the tests prove
@@ -66,3 +67,13 @@ that has been applied anywhere is never edited — a change is a new numbered fi
 `004` drops and recreates what `002` made rather than editing `002`. `tests/test_pg.py` asserts
 that a second `migrate` applies nothing and leaves every object as it was; it does not, and need
 not, prove that any single file could be re-run by hand.
+
+## The reader role
+
+`005_reader_role.sql` creates `xmetrics_reader`, a group with `USAGE` on `raw`, `core`, `mart`,
+`SELECT` on their tables and `EXECUTE` on `mart`'s functions — and nothing else. `raw` and `core`
+are included because a function called from a view runs with the caller's privileges, so a
+reader of `mart.v_changes` needs to read the tables `mart.changes_since` touches. Login users are
+made by `python -m pg.roles reader` (passwords are not committed); each also gets
+`default_transaction_read_only = on` as a second layer. `tests/test_api.py` turns that second
+layer off and proves the grants alone refuse every write.

@@ -171,7 +171,7 @@ measurement window's end and keeps the original as `recorded_at`), and `mart` is
 views and functions only, so nothing on a screen can be a number `raw` cannot reproduce.
 
 ```
-docker compose -f pg/docker-compose.yml up -d                    # PostgreSQL 16 on localhost:5432
+docker compose up -d postgres                                    # PostgreSQL 16 on localhost:5432
 set XMETRICS_PG_DSN=postgresql://xmetrics:xmetrics@localhost:5432/xmetrics
 python -m pg.migrate                                             # pg/schema/*.sql, each once, ledger in pg.schema_migrations
 python -m pg.load out/x_legacy_claude.db out/x.db                # idempotent: load twice, same rows
@@ -186,6 +186,36 @@ same function. `mart.v_latest`, `mart.v_freshness` (how old each account's numbe
 red) `mart.v_runs` (newest first by when the numbers were taken) and `mart.v_run_status` (targets · measured ·
 missing · failed · not reached · complete, per run — what `/health` will read) are the other views a first
 dashboard needs.
+
+## The same data over HTTP — `api/`
+
+A dashboard is one reader. The moment a second thing needs the numbers — a sheet, a Slack bot,
+someone else's dashboard — sending files stops scaling. `api/` is a read-only FastAPI service over
+the same `mart` views, so nothing it serves can differ from what the dashboard shows.
+
+```
+docker compose up -d --build          # postgres → setup (migrate · load ./out · create reader login) → api
+http://localhost:8000/docs            # the whole API, with live "try it out"
+```
+
+| endpoint | returns |
+|---|---|
+| `GET /health` | database reachable, when the newest data was taken, `stale` when older than 8 days (the dashboard's red-card rule), whether the last run reached every account |
+| `GET /accounts` | each account's latest measurement; `?tier=` `?min_engagement=` `?status=` `?sort=` `?limit=&offset=`, with `total` before paging |
+| `GET /accounts/{handle}` | one account and its whole measurement history, oldest first |
+| `GET /changes` | what changed in the latest run — `mart.v_changes`; `?run=` for an earlier one |
+| `GET /runs` | every run: targets · measured · missing · failed · not reached · complete |
+
+Three things it does on purpose. It connects as a member of `xmetrics_reader` (`pg/schema/005`), a
+role with `SELECT` and nothing else — `tests/test_api.py` opens that connection and tries `INSERT`,
+`UPDATE`, `DELETE`, `CREATE TABLE`; the database refuses each. No SQL is built from request input:
+every statement is complete in `api/queries.py`, the sort is a whitelist key (anything else is a 422
+before a query runs), everything else is a bind parameter. And the API container is handed only the
+reader DSN; the one-shot `setup` container holds the owner password, does its job, and exits.
+
+Timestamps come back in UTC whatever the server's zone, `dropped` in `/changes` keeps the meaning
+above (we went looking; it was not there), and `/health` answers 503 with the reason when the
+database is gone rather than 500 with a traceback.
 
 ## Live run (2026-09-06, Windows, logged-in session) — evidence in `docs/live-run-2026-09-06/`
 
@@ -302,7 +332,7 @@ It is five regexes, and that is deliberate. Its job is not to detect spam well; 
 ```
 xmetrics/   parse · metrics · store · legacy · validate · agent · export · diff · collect · cli
 pg/         PostgreSQL: docker-compose · migrate (schema/001-003) · load (SQLite -> raw) · raw / core / mart
-tests/      73 test cases in 59 test functions, parametrize expanded (parser formats, metrics, legacy cross-check, guardrails, diff rule + run targets + thresholds, rounding, SQL == Python)
+tests/      80 test cases in 66 test functions, parametrize expanded (parser formats, metrics, legacy cross-check, guardrails, diff rule + run targets + thresholds, rounding, SQL == Python, read API + read-only role)
 fixtures/   captured aria-labels + the real 2026-09 deliverable
 out/        generated: CSV, dashboard, validation report, agent audit
 mcp_server.py  ·  n8n/  ·  .github/workflows/weekly.yml

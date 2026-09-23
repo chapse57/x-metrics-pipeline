@@ -1,4 +1,4 @@
-* text=auto eol=lf
-*.png binary
-*.gif binary
-*.webm binary
+# Files that must keep LF even on Windows checkouts (autocrlf=true would give them CRLF)
+.dockerignore text eol=lf
+Dockerfile text eol=lf
+*.sh text eol=lf

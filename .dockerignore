@@ -1,0 +1,14 @@
+.git
+.venv
+.xmetrics-profile
+.pytest_cache
+__pycache__
+**/__pycache__
+out
+docs
+evals
+n8n
+fixtures
+*.patch
+*.webm
+.env

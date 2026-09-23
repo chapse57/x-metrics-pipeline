@@ -1,0 +1,60 @@
+# x-metrics: database + read API, one command.
+#
+#   docker compose up -d --build
+#   http://localhost:8000/docs
+#
+# Three services. `setup` runs once and exits: it applies pg/schema, loads whatever SQLite files
+# are in ./out, and creates the read-only login. `api` starts only after `setup` has succeeded
+# and is given nothing but the reader DSN — the API container never holds the owner password.
+#
+#   docker compose run --rm setup            # re-run after a new collection (re-loads ./out, idempotent)
+#   docker compose logs -f api
+#
+# Passwords below are for a laptop. On a server, put real ones in a .env file (compose reads it)
+# and do not commit it.
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${PG_OWNER_USER:-xmetrics}
+      POSTGRES_PASSWORD: ${PG_OWNER_PASSWORD:-xmetrics}
+      POSTGRES_DB: ${PG_DB:-xmetrics}
+    ports:
+      - "5432:5432"
+    volumes:
+      - xmetrics_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PG_OWNER_USER:-xmetrics} -d ${PG_DB:-xmetrics}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  setup:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      XMETRICS_PG_DSN: postgresql://${PG_OWNER_USER:-xmetrics}:${PG_OWNER_PASSWORD:-xmetrics}@postgres:5432/${PG_DB:-xmetrics}
+      XMETRICS_API_USER: ${API_USER:-xmetrics_api}
+      XMETRICS_API_PASSWORD: ${API_PASSWORD:-xmetrics_api}
+    volumes:
+      - ./out:/app/out:ro
+    command: >
+      sh -ec "python -m pg.migrate;
+              for f in out/x_legacy_claude.db out/x.db; do [ -f $$f ] && python -m pg.load $$f; done;
+              python -m pg.roles reader"
+
+  api:
+    build: .
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+    environment:
+      XMETRICS_API_DSN: postgresql://${API_USER:-xmetrics_api}:${API_PASSWORD:-xmetrics_api}@postgres:5432/${PG_DB:-xmetrics}
+      XMETRICS_STALE_AFTER_DAYS: "8"
+    ports:
+      - "8000:8000"
+
+volumes:
+  xmetrics_pg:
