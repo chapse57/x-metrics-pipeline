@@ -4,8 +4,8 @@
 --       same rule /health uses (stale_after_days) — the card turns red on the day the API says stale.
 --   (b) Visualization: Detail / Table showing the rest: when the numbers were taken, which run,
 --       how many accounts it set out to measure, how many it reached, whether it was complete.
-SELECT taken_at                                                    AS "data taken at",
-       floor(EXTRACT(EPOCH FROM now() - taken_at) / 86400)::int    AS "age days",
+SELECT floor(EXTRACT(EPOCH FROM now() - taken_at) / 86400)::int    AS "age days",   -- first: the gauge reads column 1
+       taken_at                                                    AS "data taken at",
        (EXTRACT(EPOCH FROM now() - taken_at) / 86400) > 8          AS stale,
        run_id,
        targets                                                     AS "accounts tried",

@@ -29,12 +29,19 @@ http://localhost:3000
    syncs and shows `v_latest`, `v_changes`, `v_freshness`, `v_runs`, `v_run_status`.
 3. **Four questions.** For each file in `metabase/`: New → SQL query → pick `x-metrics` → paste →
    run → choose the visualization named in the file's header comment → Save, name it as in the
-   table above. `04_freshness.sql` is saved twice: once as a Gauge on `age days` (set ranges 0–8
-   green, 8–30 red in the gauge settings), once as Detail.
-4. **One dashboard.** New → Dashboard → `x-metrics` → add the five saved questions. Layout: gauge
-   top-left, detail beside it, accounts table full width, scatter and changes side by side below.
-   Every card gets its one-line description from the SQL header (dashboard → pencil → card → ⓘ).
-5. **Screenshot** the whole dashboard to `docs/metabase-dashboard.png`. That is portfolio slide one.
+   table above. `04_freshness.sql` is saved twice: once as a Gauge (set ranges 0–8 green, 8–30 red
+   in the gauge settings), once as Detail. The gauge reads the *first* column of the single row,
+   which is why `age days` comes first in that file — with `taken_at` first Metabase refuses
+   ("gauge needs a number").
+4. **One dashboard.** New → Dashboard → `x-metrics` → add the five saved questions. Layout used
+   (24-column grid): gauge 5 wide + detail 7 wide + scatter 12 wide on the top row, accounts table
+   full width below, changes table full width at the bottom. Each question carries its one-line
+   description (the ⓘ on the card); the dashboard description carries the sentence the client gets:
+   *"This dashboard never reports an account as gone unless we actually went looking for it and it
+   wasn't there. If we didn't look, it says so."*
+5. **Screenshot** the whole dashboard to `docs/metabase-dashboard.png` — it is taller than one
+   screen, so use DevTools: F12 → Ctrl+Shift+P → "Capture full size screenshot". That is portfolio
+   slide one.
 6. **Public link** (so a proposal can say "here is the URL"): Admin → Settings → Public sharing →
    enable; then on the dashboard, share icon → Public link. Note the link in `docs/` only if you
    would actually send it — a public link is public.
