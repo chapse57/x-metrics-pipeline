@@ -34,14 +34,16 @@ http://localhost:3000
    which is why `age days` comes first in that file — with `taken_at` first Metabase refuses
    ("gauge needs a number").
 4. **One dashboard.** New → Dashboard → `x-metrics` → add the five saved questions. Layout used
-   (24-column grid): gauge 5 wide + detail 7 wide + scatter 12 wide on the top row, accounts table
-   full width below, changes table full width at the bottom. Each question carries its one-line
-   description (the ⓘ on the card); the dashboard description carries the sentence the client gets:
-   *"This dashboard never reports an account as gone unless we actually went looking for it and it
-   wasn't there. If we didn't look, it says so."*
-5. **Screenshot** the whole dashboard to `docs/metabase-dashboard.png` — it is taller than one
-   screen, so use DevTools: F12 → Ctrl+Shift+P → "Capture full size screenshot". That is portfolio
-   slide one.
+   (24-column grid, **fixed width**): gauge 5 wide + detail 7 wide + scatter 12 wide on the top row,
+   accounts table full width below, changes table full width at the bottom. Full width stretches
+   the cards until the page no longer fits one screen — fixed width keeps it to one screenshot.
+   Each question carries its one-line description (the ⓘ on the card); the dashboard description
+   carries the sentence the client gets: *"This dashboard never reports an account as gone unless we
+   actually went looking for it and it wasn't there. If we didn't look, it says so."*
+   Before the screenshot, switch Metabase to English (Admin → Settings → Localization, and your
+   account's language): otherwise dates render as "9월 23, 2026, 9:17 오전".
+5. **Screenshot** the dashboard (Win+Shift+S, dashboard area only) to `docs/metabase-dashboard.png`.
+   That is portfolio slide one.
 6. **Public link** (so a proposal can say "here is the URL"): Admin → Settings → Public sharing →
    enable; then on the dashboard, share icon → Public link. Note the link in `docs/` only if you
    would actually send it — a public link is public.
