@@ -3,7 +3,7 @@
 #   docker compose up -d --build
 #   http://localhost:8000/docs
 #
-# Three services. `setup` runs once and exits: it applies pg/schema, loads whatever SQLite files
+# Three services plus Metabase (week 3). `setup` runs once and exits: it applies pg/schema, loads whatever SQLite files
 # are in ./out, and creates the read-only login. `api` starts only after `setup` has succeeded
 # and is given nothing but the reader DSN — the API container never holds the owner password.
 #
@@ -56,5 +56,23 @@ services:
     ports:
       - "8000:8000"
 
+  # Week 3: the open-source BI tool this pipeline is sold with. It connects to Postgres as the same
+  # read-only login the API uses (add the database once in its UI: host postgres, db xmetrics,
+  # user xmetrics_api). Its own settings live in a named volume; nothing of ours is stored in it.
+  #   docker compose up -d metabase        ->  http://localhost:3000   (first start ~1 min)
+  metabase:
+    image: metabase/metabase:latest
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      MB_DB_FILE: /metabase-data/metabase.db
+      JAVA_TIMEZONE: UTC
+    ports:
+      - "3000:3000"
+    volumes:
+      - metabase_app:/metabase-data
+
 volumes:
   xmetrics_pg:
+  metabase_app:
