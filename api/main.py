@@ -1,6 +1,6 @@
 """x-metrics read API — the dashboard's data, over HTTP, for anything that is not the dashboard.
 
-    GET /health                     database reachable? how old is the data? was the last run complete?
+    GET /health                     database reachable? how old is the data? did the last pipeline attempt finish?
     GET /accounts                   latest measurement per account; filter by tier / min_engagement / status, sort, page
     GET /accounts/{handle}          one account with its full measurement history
     GET /changes                    what changed in the latest run (mart.v_changes); ?run=<id> for an earlier run
@@ -23,13 +23,14 @@ import os
 from typing import Annotated, Literal
 
 import psycopg
+from psycopg.rows import dict_row
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from . import db
 from . import queries as q
 from .db import get_conn
-from .models import Account, AccountDetail, AccountPage, Change, ChangeReport, Health, RunStatus
+from .models import Account, AccountDetail, AccountPage, Change, ChangeReport, Health, PipelineAttempt, RunStatus
 
 STALE_AFTER_DAYS = int(os.environ.get("XMETRICS_STALE_AFTER_DAYS", "8"))
 
@@ -49,25 +50,30 @@ SortKey = Literal[tuple(q.SORTS)]  # type: ignore[valid-type]  — the whitelist
 # ---------------------------------------------------------------------------- health --
 @app.get("/health", response_model=Health, responses={503: {"description": "database unreachable"}})
 def health():
-    """Reachability and freshness. `ok` is false when the newest data is older than
-    `stale_after_days` — the dashboard turns red on the same rule — or when the database is down."""
+    """Reachability, freshness and the last pipeline attempt. `ok` is false when the newest data
+    is older than `stale_after_days` (the dashboard turns red on the same rule), when the last
+    scheduled attempt failed (ops.pipeline_runs), or when the database is down."""
     try:
-        with db.connect() as conn:
-            runs = conn.execute("SELECT count(*) FROM mart.v_runs").fetchone()[0]
+        with db.connect(row_factory=dict_row) as conn:
+            runs = conn.execute("SELECT count(*) AS n FROM mart.v_runs").fetchone()["n"]
             row = conn.execute(q.LATEST_RUN).fetchone()
+            last = conn.execute(q.LATEST_PIPELINE).fetchone()
     except (psycopg.Error, RuntimeError) as e:
         body = Health(ok=False, database=f"error: {e}", latest_run=None, data_taken_at=None,
                       data_age_seconds=None, stale=True, stale_after_days=STALE_AFTER_DAYS,
-                      latest_run_complete=None, runs=0)
+                      latest_run_complete=None, runs=0, last_pipeline=None)
         return JSONResponse(status_code=503, content=body.model_dump(mode="json"))
+    pipeline = PipelineAttempt(**last) if last else None
+    pipeline_failed = pipeline is not None and pipeline.status == "failed"
     if row is None:
         return Health(ok=False, database="ok", latest_run=None, data_taken_at=None, data_age_seconds=None,
-                      stale=True, stale_after_days=STALE_AFTER_DAYS, latest_run_complete=None, runs=runs)
-    run_id, source, taken_at, *_counts, complete, age = row
-    stale = age > STALE_AFTER_DAYS * 86400
-    return Health(ok=not stale, database="ok", latest_run=run_id, data_taken_at=taken_at,
-                  data_age_seconds=int(age), stale=stale, stale_after_days=STALE_AFTER_DAYS,
-                  latest_run_complete=complete, runs=runs)
+                      stale=True, stale_after_days=STALE_AFTER_DAYS, latest_run_complete=None, runs=runs,
+                      last_pipeline=pipeline)
+    stale = row["age_seconds"] > STALE_AFTER_DAYS * 86400
+    return Health(ok=not stale and not pipeline_failed, database="ok", latest_run=row["run_id"],
+                  data_taken_at=row["taken_at"], data_age_seconds=int(row["age_seconds"]), stale=stale,
+                  stale_after_days=STALE_AFTER_DAYS, latest_run_complete=row["complete"], runs=runs,
+                  last_pipeline=pipeline)
 
 
 # -------------------------------------------------------------------------- accounts --

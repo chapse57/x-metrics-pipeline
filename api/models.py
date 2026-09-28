@@ -3,6 +3,7 @@ when unknown), and a field that is not here never appears. FastAPI renders them 
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -98,8 +99,22 @@ class RunStatus(BaseModel):
     complete: bool = Field(description="false while any target is not_reached")
 
 
+class PipelineAttempt(BaseModel):
+    """The newest row of ops.pipeline_runs: did the last collect -> load -> diff finish?"""
+    id: int
+    status: Literal["running", "ok", "failed"]
+    trigger: Literal["scheduled", "manual", "retry"]
+    step: str | None = Field(description="the step in progress, or the one that failed")
+    run_id: str | None
+    retry_of: int | None
+    started_at: datetime
+    finished_at: datetime | None
+    seconds: int
+    detail: str | None
+
+
 class Health(BaseModel):
-    ok: bool = Field(description="database reachable and data not stale")
+    ok: bool = Field(description="database reachable, data not stale, and the last pipeline attempt did not fail")
     database: str = Field(description="'ok' or the error")
     latest_run: str | None
     data_taken_at: datetime | None
@@ -108,3 +123,4 @@ class Health(BaseModel):
     stale_after_days: int
     latest_run_complete: bool | None = Field(description="false when the newest run left accounts unreached")
     runs: int = Field(description="runs with measurements")
+    last_pipeline: PipelineAttempt | None = Field(default=None, description="newest scheduled/manual attempt; null before the first")

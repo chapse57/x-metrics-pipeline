@@ -39,7 +39,7 @@ def database():
     from pg.migrate import migrate
     from pg.roles import ensure_reader
     with psycopg.connect(DSN) as conn:
-        conn.execute("DROP SCHEMA IF EXISTS raw, core, mart, pg CASCADE")
+        conn.execute("DROP SCHEMA IF EXISTS raw, core, mart, pg, ops CASCADE")
         conn.commit()
         migrate(conn)
         for path in SQLITE_FILES:

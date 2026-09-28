@@ -51,10 +51,10 @@ def object_inventory(conn) -> set[tuple[str, str, str]]:
     """Every table, view and function in our schemas — to prove a second migrate adds nothing."""
     rows = conn.execute("""
         SELECT table_schema, table_name, table_type FROM information_schema.tables
-         WHERE table_schema IN ('raw', 'core', 'mart', 'pg')
+         WHERE table_schema IN ('raw', 'core', 'mart', 'pg', 'ops')
         UNION ALL
         SELECT routine_schema, routine_name, routine_type FROM information_schema.routines
-         WHERE routine_schema IN ('raw', 'core', 'mart', 'pg')
+         WHERE routine_schema IN ('raw', 'core', 'mart', 'pg', 'ops')
     """).fetchall()
     return set(rows)
 
@@ -63,7 +63,7 @@ def object_inventory(conn) -> set[tuple[str, str, str]]:
 def conn():
     from pg.migrate import migrate
     with psycopg.connect(DSN) as c:
-        c.execute("DROP SCHEMA IF EXISTS raw, core, mart, pg CASCADE")
+        c.execute("DROP SCHEMA IF EXISTS raw, core, mart, pg, ops CASCADE")
         c.commit()
         migrate(c)
         yield c

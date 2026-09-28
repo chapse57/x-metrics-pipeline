@@ -77,3 +77,12 @@ reader of `mart.v_changes` needs to read the tables `mart.changes_since` touches
 made by `python -m pg.roles reader` (passwords are not committed); each also gets
 `default_transaction_read_only = on` as a second layer. `tests/test_api.py` turns that second
 layer off and proves the grants alone refuse every write.
+
+## `006_ops.sql` — the pipeline ledger
+
+`ops.pipeline_runs` is one row per attempt of the scheduled collect → load → diff (`ops/`):
+status, trigger, the step in progress or the one that failed, the collector run it produced,
+`retry_of` for a retry, and when the failure message went out. Exposed to the reader as
+`mart.v_pipeline_runs` / `mart.v_pipeline_latest`; written only by the owner. `pg/report.py`
+rebuilds the Python `DiffResult` from `mart.changes_since`, so `changes.md` can be written from
+the database — the whole history — rather than from one machine's SQLite file.

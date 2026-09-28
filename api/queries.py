@@ -66,3 +66,9 @@ SELECT run_id, source, taken_at, targets, accounts_measured AS measured, missing
        EXTRACT(EPOCH FROM now() - taken_at)::bigint AS age_seconds
 FROM mart.v_runs WHERE recency = 1
 """
+
+# ---- /health: the newest pipeline attempt (pg/schema/006) ----------------------------
+LATEST_PIPELINE = """
+SELECT id, status, trigger, step, run_id, retry_of, started_at, finished_at, seconds, detail
+FROM mart.v_pipeline_latest
+"""

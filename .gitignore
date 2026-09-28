@@ -12,3 +12,5 @@ out/
 xmetrics.egg-info/
 docs/recording/
 .env
+ops/env.cmd
+out/logs/

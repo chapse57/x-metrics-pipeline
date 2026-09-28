@@ -200,7 +200,7 @@ http://localhost:8000/docs            # the whole API, with live "try it out"
 
 | endpoint | returns |
 |---|---|
-| `GET /health` | database reachable, when the newest data was taken, `stale` when older than 8 days (the dashboard's red-card rule), whether the last run reached every account |
+| `GET /health` | database reachable, when the newest data was taken, `stale` when older than 8 days (the dashboard's red-card rule), whether the last run reached every account, and `last_pipeline` — did the last scheduled attempt finish (`ops/`) |
 | `GET /accounts` | each account's latest measurement; `?tier=` `?min_engagement=` `?status=` `?sort=` `?limit=&offset=`, with `total` before paging |
 | `GET /accounts/{handle}` | one account and its whole measurement history, oldest first |
 | `GET /changes` | what changed in the latest run — `mart.v_changes`; `?run=` for an earlier one |
@@ -216,6 +216,29 @@ reader DSN; the one-shot `setup` container holds the owner password, does its jo
 Timestamps come back in UTC whatever the server's zone, `dropped` in `/changes` keeps the meaning
 above (we went looking; it was not there), and `/health` answers 503 with the reason when the
 database is gone rather than 500 with a traceback.
+
+## When nobody is watching — `ops/`
+
+A dashboard is only worth trusting while someone can answer: *did last night's load run, did it
+finish, and if not, who knows?* `ops/` is those answers as code.
+
+```
+python -m ops.pipeline --trigger scheduled     # collect -> load -> diff, written down as it goes
+python -m ops.pipeline --retry 12              # attempt #12 failed: redo it from the step that failed
+python -m ops.pipeline --fail-at load          # rehearse a failure: the row, the Slack message, no harm
+```
+
+Every attempt is a row in `ops.pipeline_runs` (`pg/schema/006`) **before** its first step runs:
+`running`, then `ok` or `failed` with the step and the error. A retry is a new row pointing at the
+old one, so a failure is never rewritten by the fix. Failure sends exactly one Slack message — the
+step, the first line of the error, the retry command; success sends nothing. `/health` shows the
+newest attempt and is `ok: false` when it failed; the dashboard has a card for the last ten.
+
+The weekly `changes.md` is read **from the database** (`mart.changes_since`, via `pg/report.py`),
+because the database holds every run from every file and the local SQLite does not; then the same
+report is recomputed in Python over the file and the step fails if they disagree — the week-1 CI
+assertion, repeated on every scheduled run, on real data. `ops/schedule_windows.ps1` registers the
+Sunday 22:00 job on the PC that holds the logged-in browser profile; `ops/README.md` has the rest.
 
 ## Live run (2026-09-06, Windows, logged-in session) — evidence in `docs/live-run-2026-09-06/`
 
@@ -331,8 +354,9 @@ It is five regexes, and that is deliberate. Its job is not to detect spam well; 
 
 ```
 xmetrics/   parse · metrics · store · legacy · validate · agent · export · diff · collect · cli
-pg/         PostgreSQL: docker-compose · migrate (schema/001-003) · load (SQLite -> raw) · raw / core / mart
-tests/      80 test cases in 66 test functions, parametrize expanded (parser formats, metrics, legacy cross-check, guardrails, diff rule + run targets + thresholds, rounding, SQL == Python, read API + read-only role)
+pg/         PostgreSQL: migrate (schema/001-006) · load (SQLite -> raw) · roles · report (the change report, back from SQL) · raw / core / mart / ops
+ops/        pipeline (collect -> load -> diff, one command) · ledger (ops.pipeline_runs) · notify (Slack, failure only) · Task Scheduler / cron
+tests/      98 test cases in 84 test functions, parametrize expanded (parser formats, metrics, legacy cross-check, guardrails, diff rule + run targets + thresholds, rounding, SQL == Python, read API + read-only role, pipeline ledger + retry + alert + SQL report)
 fixtures/   captured aria-labels + the real 2026-09 deliverable
 out/        generated: CSV, dashboard, validation report, agent audit
 mcp_server.py  ·  n8n/  ·  .github/workflows/weekly.yml
