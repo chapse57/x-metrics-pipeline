@@ -81,10 +81,10 @@ def main(out: Path = Path("docs/architecture.png")) -> Path:
         d.text((78, y), a, font=fb, fill=FG); d.text((290, y), b, font=fb, fill=FG); d.text((470, y), c, font=fb, fill=FG); y += 36
     lines(d, 78, y + 18, ["3 accounts · 20 original posts each · 36 s",
                           "classify: 3/3 accepted (every quote verbatim)",
-                          "validate: 0 errors · 53 tests passing",
+                          "validate: 0 errors · 98 tests passing",
                           "weekly GitHub Actions: tests → validate → export → diff",
                           "MCP server · n8n workflow",
-                          "diff 09-06 → 09-18 (same 3 accounts): 2 flagged — views_up, went_silent · 1 within thresholds"],
+                          "09-23 re-measure (20 accounts): 10 flagged · 0 dropped"],
           font(14), fill=MUTED, gap=5)
 
     # ---- bottom-middle: guard panel
@@ -114,7 +114,7 @@ def main(out: Path = Path("docs/architecture.png")) -> Path:
     d.text((1268, 412), "changes.md", font=font(19, True), fill=BLUE)
     lines(d, 1268, 455, ["each account, this run vs last:", "", "flagged  crossed a threshold", "   followers ±5%", "   engagement 0.2 pp and 25%",
                          "   views/followers ±25%", "   silent ≥ 14 days", "   tier change — always",
-                         "new       first time measured", "dropped  in last run, not this",
+                         "new       first time measured", "dropped  looked for, not found",
                          "", "every other delta shown too,", "unflagged. Nothing estimated:", "two stored rows, one subtraction.",
                          "", "--fail-on-flags → page someone", "only when something moved."],
           font(13), fill=FG, gap=5)
