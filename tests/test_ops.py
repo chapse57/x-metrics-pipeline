@@ -190,7 +190,7 @@ def owner():
     from pg.roles import ensure_reader
     from tests.test_api import READER_PW, READER_USER, SQLITE_FILES, reader_dsn
     with psycopg.connect(DSN) as conn:
-        conn.execute("DROP SCHEMA IF EXISTS raw, core, mart, pg, ops CASCADE"); conn.commit()
+        conn.execute("DROP SCHEMA IF EXISTS raw, core, mart, pg, ops, auth CASCADE"); conn.commit()
         migrate(conn)
         for path in SQLITE_FILES:
             load(conn, path)

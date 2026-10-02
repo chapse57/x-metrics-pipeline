@@ -130,3 +130,16 @@ On a client server, point Metabase's application database at Postgres too
 data it reports on. Not switched here on purpose: switching wipes the H2 dashboards unless they
 are migrated first (`load-from-h2`), and this repo's dashboard is rebuilt from
 `dashboards/metabase/*.sql` in minutes anyway.
+
+## Backup and restore drill — `ops/backup.py`
+
+```
+call ops\env.cmd
+set XMETRICS_PG_DOCKER=postgres          # run pg_dump / pg_restore inside the compose service
+python -m ops.backup drill               # dump -> restore into a fresh database -> compare -> drop the copy
+```
+
+The comparison covers every table in `raw`, `core`, `mart`, `ops`, `auth` and `pg`: row count and a
+checksum over all rows (md5 of each row's text, sorted, md5 of the lot). Exit code 1 on any
+difference. `tests/test_backup.py` does the same on the CI data, then changes one value in the copy
+and checks the comparison names that table, and that the restored copy keeps the read-only role.

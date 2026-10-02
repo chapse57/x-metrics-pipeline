@@ -39,7 +39,7 @@ def database():
     from pg.migrate import migrate
     from pg.roles import ensure_reader
     with psycopg.connect(DSN) as conn:
-        conn.execute("DROP SCHEMA IF EXISTS raw, core, mart, pg, ops CASCADE")
+        conn.execute("DROP SCHEMA IF EXISTS raw, core, mart, pg, ops, auth CASCADE")
         conn.commit()
         migrate(conn)
         for path in SQLITE_FILES:
@@ -52,7 +52,10 @@ def database():
 @pytest.fixture(scope="session")
 def client(database):
     from api.main import app
-    return TestClient(app)
+    from pg.roles import create_key
+    with psycopg.connect(DSN) as conn:
+        key = create_key(conn, "test-api-suite", per_minute=10_000)
+    return TestClient(app, headers={"X-API-Key": key})
 
 
 # --------------------------------------------------------------- 1. read-only role --

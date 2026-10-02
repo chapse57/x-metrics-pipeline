@@ -6,6 +6,9 @@
     GET /changes                    what changed in the latest run (mart.v_changes); ?run=<id> for an earlier run
     GET /runs                       every run: what it set out to measure and how far it got
 
+Every endpoint except /health needs an `X-API-Key` header (api/auth.py, pg/schema/007):
+401 without a valid key, 429 over the key's per-minute limit, every decision logged.
+
 Three rules, each visible in the code:
   1. Read-only by role, not by convention. The connection is a member of xmetrics_reader
      (pg/schema/005); the database refuses writes, whatever the API asks. tests/test_api.py tries.
@@ -29,6 +32,7 @@ from fastapi.responses import JSONResponse
 
 from . import db
 from . import queries as q
+from .auth import require_key
 from .db import get_conn
 from .models import Account, AccountDetail, AccountPage, Change, ChangeReport, Health, PipelineAttempt, RunStatus
 
@@ -77,7 +81,7 @@ def health():
 
 
 # -------------------------------------------------------------------------- accounts --
-@app.get("/accounts", response_model=AccountPage)
+@app.get("/accounts", response_model=AccountPage, dependencies=[Depends(require_key)])
 def accounts(
     conn: Conn,
     tier: Annotated[Literal[q.TIERS] | None, Query(description="exact tier label")] = None,  # type: ignore[valid-type]
@@ -97,7 +101,7 @@ def accounts(
                        items=[Account(**{k: v for k, v in r.items() if k != "total"}) for r in rows])
 
 
-@app.get("/accounts/{handle}", response_model=AccountDetail, responses={404: {"description": "unknown handle"}})
+@app.get("/accounts/{handle}", response_model=AccountDetail, responses={404: {"description": "unknown handle"}}, dependencies=[Depends(require_key)])
 def account(handle: str, conn: Conn):
     """One account, with every measurement it has ever had, oldest first."""
     h = handle.strip().lstrip("@").lower()
@@ -121,7 +125,7 @@ def _report(rows: list[dict], run: str | None) -> ChangeReport:
     return ChangeReport(run=run, counts=counts, changes=changes)
 
 
-@app.get("/changes", response_model=ChangeReport, responses={404: {"description": "unknown run"}})
+@app.get("/changes", response_model=ChangeReport, responses={404: {"description": "unknown run"}}, dependencies=[Depends(require_key)])
 def changes(conn: Conn, run: Annotated[str | None, Query(description="a run_id from /runs; default: the latest")] = None):
     """What changed: each account against its own previous measurement. `dropped` only ever
     means the run went looking for the account and it was not there; accounts a run did not try
@@ -136,7 +140,7 @@ def changes(conn: Conn, run: Annotated[str | None, Query(description="a run_id f
 
 
 # ------------------------------------------------------------------------------ runs --
-@app.get("/runs", response_model=list[RunStatus])
+@app.get("/runs", response_model=list[RunStatus], dependencies=[Depends(require_key)])
 def runs(conn: Conn, limit: Annotated[int, Query(ge=1, le=200)] = 50):
     """Every run, newest first, with what it set out to measure and how far it got.
     A run with `not_reached > 0` is incomplete: re-run it before trusting its report."""

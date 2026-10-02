@@ -55,7 +55,7 @@ session      + audit   + review     + report     validation   changes.md
 | **export** (`export.py`) | Client CSV (same columns as the hand-made sheet) + `dashboard.html` (no dependencies, opens from disk: search, niche/tier filters, engagement slider, sortable table, followers-vs-engagement scatter, per-account detail). |
 | **diff** (`diff.py`) | Compares the two most recent runs per account (or any two by id). Followers, engagement, views/followers, tier, days-since-last-post — every delta reported; a change is *flagged* only past a threshold (`--followers-pct 5`, `--engagement-pp 0.2`, `--views-pct 25`, `--silent-days 14`). Accounts that appear or disappear between runs are listed separately. `--fail-on-flags` lets a scheduler page someone only when something moved. Deltas are computed from stored rows, never estimated. |
 | **schedule** | `.github/workflows/weekly.yml`: weekly cron + on push. Tests, then validate `--strict` against the hand-made sheet (a failed check fails the job), export, `diff`; the Slack summary leads with what changed. With no pushed DB it seeds from the 2026-09 deliverable in `fixtures/`, so CI never validates an empty file. Collection stays on a self-hosted runner (needs the logged-in profile). `n8n/x-metrics-weekly.json` for teams on n8n. |
-| **MCP** (`mcp_server.py`) | Read-only MCP server so Claude can query the dataset: `search_accounts`, `account`, `validation_summary`, `agent_audit`. |
+| **MCP** (`mcp_server.py`) | MCP server over the Postgres store: `search_accounts`, `account`, `changes`. Read-only login, API key per call, at most 50 rows per answer (cut answers say `truncated`). |
 
 ## The guardrail — what the agent gets wrong, and what catches it
 
@@ -194,9 +194,17 @@ someone else's dashboard — sending files stops scaling. `api/` is a read-only 
 the same `mart` views, so nothing it serves can differ from what the dashboard shows.
 
 ```
-docker compose up -d --build          # postgres → setup (migrate · load ./out · create reader login) → api
+docker compose up -d --build          # postgres → setup (migrate · load ./out · reader login · local API key) → api
 http://localhost:8000/docs            # the whole API, with live "try it out"
+curl -H "X-API-Key: xm_local_dev" localhost:8000/accounts?limit=3     # local key; set LOCAL_API_KEY to change it
+python -m pg.roles key --name acme --per-minute 60                   # a real key: printed once, stored as SHA-256
 ```
+
+Every endpoint except `/health` needs an `X-API-Key` header: 401 without a valid key, 429 over the
+key's per-minute limit. The check, the limit and the log (`auth.request_log`: key, surface, path,
+decision) all happen in one database function, `auth.check_key` (`pg/schema/007`), which runs as
+the owner. The API's login gets `EXECUTE` on that function and nothing else in `auth`: it cannot
+read the keys, and it cannot write or delete a log row. `tests/test_auth.py` tries.
 
 | endpoint | returns |
 |---|---|
@@ -356,7 +364,7 @@ It is five regexes, and that is deliberate. Its job is not to detect spam well; 
 xmetrics/   parse · metrics · store · legacy · validate · agent · export · diff · collect · cli
 pg/         PostgreSQL: migrate (schema/001-006) · load (SQLite -> raw) · roles · report (the change report, back from SQL) · raw / core / mart / ops
 ops/        pipeline (collect -> load -> diff, one command) · ledger (ops.pipeline_runs) · notify (Slack, failure only) · Task Scheduler / cron
-tests/      98 test cases in 84 test functions, parametrize expanded (parser formats, metrics, legacy cross-check, guardrails, diff rule + run targets + thresholds, rounding, SQL == Python, read API + read-only role, pipeline ledger + retry + alert + SQL report)
+tests/      111 test cases in 93 test functions, parametrize expanded (parser formats, metrics, legacy cross-check, guardrails, diff rule + run targets + thresholds, rounding, SQL == Python, read API + read-only role, API keys + per-key limit + MCP caps, backup -> restore -> row counts and checksums, pipeline ledger + retry + alert + SQL report). CI runs all of them against Postgres 16 and fails on any skip.
 fixtures/   captured aria-labels + the real 2026-09 deliverable
 out/        generated: CSV, dashboard, validation report, agent audit
 mcp_server.py  ·  n8n/  ·  .github/workflows/weekly.yml

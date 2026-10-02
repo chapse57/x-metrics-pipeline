@@ -29,6 +29,7 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -e ".[dev,api]"
+      - run: sudo apt-get install -y -qq postgresql-client    # pg_dump / pg_restore for tests/test_backup.py
       - run: mkdir -p out && cp fixtures/ci/*.db out/
       - name: pytest (fail on any skip)
         run: |

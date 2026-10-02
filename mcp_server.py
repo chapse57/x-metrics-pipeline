@@ -1,81 +1,50 @@
-"""Minimal MCP server exposing the measured dataset to Claude (or any MCP client).
+"""MCP server over the Postgres store, for Claude or any MCP client.
 
     pip install mcp
-    python mcp_server.py --db out/xmetrics.db          # stdio transport
+    set XMETRICS_MCP_DSN=postgresql://xmetrics_api:...@localhost:5432/xmetrics    (the read-only login)
+    set XMETRICS_MCP_KEY=xm_...                     (python -m pg.roles key --name claude-desktop)
+    python mcp_server.py                            (stdio transport)
 
-Tools:
-  search_accounts(niche?, tier?, min_engagement?, limit)  -> rows from the latest measurements
-  account(handle)                                          -> one account with its raw posts
-  validation_summary()                                     -> issue counts by check
-  agent_audit()                                            -> guardrail statistics
+Tools: search_accounts, account, changes. The logic and its tests live in api/mcp_tools.py:
+read-only login, every call key-checked and logged (auth.request_log, surface 'mcp'), per-key
+limit shared with the HTTP API, at most XMETRICS_MCP_MAX_ROWS rows per answer (default 50,
+cut answers say `truncated`).
 
-Read-only by design: the server never writes to the store.
+Until 2026-10 this server read the SQLite file directly, with no key and no cap.
 """
 from __future__ import annotations
 
-import argparse
 import json
 
 from mcp.server.fastmcp import FastMCP
 
-from xmetrics.store import Store
-from xmetrics.validate import run_all
+from api import mcp_tools as t
 
-ap = argparse.ArgumentParser()
-ap.add_argument("--db", default="out/xmetrics.db")
-ARGS, _ = ap.parse_known_args()
 mcp = FastMCP("x-metrics")
 
 
-def _rows(rows):
-    return [dict(r) for r in rows]
+def _j(obj) -> str:
+    return json.dumps(obj, ensure_ascii=False, default=str)
 
 
 @mcp.tool()
-def search_accounts(niche: str | None = None, tier: str | None = None, min_engagement: float = 0.0, limit: int = 25) -> str:
-    """Search measured X accounts. tier: 'Micro (<25K)' | 'Mid (25-100K)' | 'Macro (100K+)'. min_engagement in percent."""
-    st = Store(ARGS.db)
-    out = []
-    for r in st.latest_measurements():
-        if niche and niche.lower() not in (r["niche"] or "").lower():
-            continue
-        if tier and r["tier"] != tier:
-            continue
-        if r["engagement_rate"] < min_engagement:
-            continue
-        out.append({k: r[k] for k in ("display", "followers", "engagement_rate", "views_to_followers", "tier", "niche", "bio_url", "dm_open", "range_end")})
-        if len(out) >= limit:
-            break
-    return json.dumps(out, ensure_ascii=False)
+def search_accounts(tier: str | None = None, min_engagement: float | None = None,
+                    sort: str = "engagement", limit: int = 25) -> str:
+    """Latest measurement per account. tier: 'Micro (<25K)' | 'Mid (25-100K)' | 'Macro (100K+)'.
+    min_engagement in percent. sort: engagement | followers | views | measured_at | handle (prefix '-' for ascending)."""
+    return _j(t.search_accounts(tier, min_engagement, sort, limit))
 
 
 @mcp.tool()
 def account(handle: str) -> str:
-    """One account with its latest measurement and raw per-post counts (if collected by the pipeline)."""
-    st = Store(ARGS.db)
-    a = st.get_account(handle)
-    if not a:
-        return json.dumps({"error": "unknown handle"})
-    m = st.conn.execute("SELECT * FROM measurements WHERE handle=? ORDER BY measured_at DESC LIMIT 1", (a["handle"],)).fetchone()
-    posts = st.posts_for(a["handle"], m["run_id"]) if m else []
-    return json.dumps({"account": dict(a), "measurement": dict(m) if m else None, "posts": _rows(posts)}, ensure_ascii=False)
+    """One account with its measurement history, oldest first."""
+    return _j(t.account(handle))
 
 
 @mcp.tool()
-def validation_summary() -> str:
-    """Counts of validation issues by check and severity for the current dataset."""
-    st = Store(ARGS.db)
-    issues = run_all(st)
-    agg: dict[str, int] = {}
-    for i in issues:
-        agg[f"{i.check} ({i.severity})"] = agg.get(f"{i.check} ({i.severity})", 0) + 1
-    return json.dumps({"rows": len(st.latest_measurements()), "issues": agg})
-
-
-@mcp.tool()
-def agent_audit() -> str:
-    """How the LLM classifier performed behind the guardrails: verdicts and which checks fired."""
-    return json.dumps(Store(ARGS.db).agent_audit_summary())
+def changes() -> str:
+    """What changed in the latest run, flagged rows first."""
+    return _j(t.changes())
 
 
 if __name__ == "__main__":

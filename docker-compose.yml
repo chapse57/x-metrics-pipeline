@@ -38,12 +38,14 @@ services:
       XMETRICS_PG_DSN: postgresql://${PG_OWNER_USER:-xmetrics}:${PG_OWNER_PASSWORD:-xmetrics}@postgres:5432/${PG_DB:-xmetrics}
       XMETRICS_API_USER: ${API_USER:-xmetrics_api}
       XMETRICS_API_PASSWORD: ${API_PASSWORD:-xmetrics_api}
+      LOCAL_API_KEY: ${LOCAL_API_KEY:-xm_local_dev}     # local only; real keys: python -m pg.roles key
     volumes:
       - ./out:/app/out:ro
     command: >
       sh -ec "python -m pg.migrate;
               for f in out/x_legacy_claude.db out/x.db; do [ -f $$f ] && python -m pg.load $$f; done;
-              python -m pg.roles reader"
+              python -m pg.roles reader;
+              python -m pg.roles key --name local --key \"$${LOCAL_API_KEY}\""
 
   api:
     build: .

@@ -63,7 +63,7 @@ def object_inventory(conn) -> set[tuple[str, str, str]]:
 def conn():
     from pg.migrate import migrate
     with psycopg.connect(DSN) as c:
-        c.execute("DROP SCHEMA IF EXISTS raw, core, mart, pg, ops CASCADE")
+        c.execute("DROP SCHEMA IF EXISTS raw, core, mart, pg, ops, auth CASCADE")
         c.commit()
         migrate(c)
         yield c
