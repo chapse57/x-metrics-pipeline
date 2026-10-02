@@ -1,0 +1,36 @@
+# Every test, including the 25 that need PostgreSQL, on every push.
+# The SQLite inputs come from fixtures/ci (copies of out/x.db and out/x_legacy_claude.db,
+# post text removed); out/ itself is git-ignored. The job fails if any test is skipped,
+# so "SQL == Python" cannot quietly turn into "SQL not checked".
+name: tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: pw
+          POSTGRES_DB: xmetrics
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      XMETRICS_PG_DSN: postgresql://postgres:pw@localhost:5432/xmetrics
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev,api]"
+      - run: mkdir -p out && cp fixtures/ci/*.db out/
+      - name: pytest (fail on any skip)
+        run: |
+          python -m pytest -q -rs | tee pytest.txt
+          if grep -qE "[0-9]+ skipped" pytest.txt; then echo "::error::tests were skipped"; exit 1; fi

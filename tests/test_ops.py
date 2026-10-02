@@ -236,11 +236,16 @@ def test_reader_sees_the_ledger_but_cannot_write_it(owner):
 
 
 @pg
-def test_health_reports_the_last_attempt_and_fails_on_a_failed_one(owner):
+def test_health_reports_the_last_attempt_and_fails_on_a_failed_one(owner, monkeypatch):
     pytest.importorskip("fastapi")
     from fastapi.testclient import TestClient
     from ops.ledger import PgLedger
+    import api.main
     from api.main import app
+    # The fixture data is real and only gets older. Without this the test passed on 09-28
+    # and failed from 10-01 on: stale data alone makes ok false, so the assertion below
+    # could no longer show that the failed attempt is what made it false.
+    monkeypatch.setattr(api.main, "STALE_AFTER_DAYS", 36500)
     client, led, spy = TestClient(app), PgLedger(owner), SpyNotifier()
     good = run_pipeline(ctx(), led, spy, steps=fake_steps([]), trigger="scheduled")
     h = client.get("/health").json()
