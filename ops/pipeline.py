@@ -5,6 +5,16 @@
     python -m ops.pipeline --from load --run 2026...Z-playwright   # the collector already ran: load + diff that run
     python -m ops.pipeline --retry 12                       # attempt #12 failed: redo it from the step that failed
     python -m ops.pipeline --fail-at load                   # rehearse a failure (records it, sends the alert)
+    python -m ops.pipeline --trigger scheduled --if-due 6   # what the scheduler calls: run only if the last
+                                                            # successful run is 6+ days old
+
+Before anything else it must reach the database within CONNECT_TIMEOUT seconds; if it cannot,
+it sends a Slack message that does not need the database, and exits 1. Then it takes the
+pipeline lock (one attempt at a time). Holding the lock proves no other attempt is alive, so
+any row still 'running' belongs to a process that died — shut down, closed, killed — and is
+marked failed with one message. That is what happened on 2026-10-04 (ops/README.md): the
+database container was not up, the connection waited with no limit, the PC was switched off
+40 minutes later, and nothing anywhere said so.
 
 Every attempt is a row in ops.pipeline_runs (pg/schema/006) from the moment it starts:
 'running' while it works, then 'ok' or 'failed' with the step that failed and the error.
@@ -44,6 +54,19 @@ from .ledger import Ledger
 log = logging.getLogger("ops.pipeline")
 
 STEPS = ("collect", "load", "diff")
+CONNECT_TIMEOUT = int(os.environ.get("XMETRICS_PG_CONNECT_TIMEOUT", "10"))   # seconds; libpq's minimum is 2
+LOCK_KEY = 7_301_982_516          # pg_advisory_lock key for "the x-metrics pipeline"; any constant works
+
+
+def connect(dsn: str, **kw):
+    """Every connection the pipeline opens: never wait for the server without a limit."""
+    import psycopg
+    return psycopg.connect(dsn, connect_timeout=CONNECT_TIMEOUT, **kw)
+
+
+def is_due(last_ok, now, days: float) -> bool:
+    """A run is due when there has been no successful one, or the last one is `days` old."""
+    return last_ok is None or (now - last_ok).total_seconds() >= days * 86400
 
 
 @dataclass
@@ -58,7 +81,7 @@ class Context:
     dsn: str | None = None
     run_id: str | None = None
     attempt_id: int | None = None
-    headless: bool = True
+    headless: bool = False            # headed: the only mode that has collected from X for real (09-23, 10-08)
     fail_at: str | None = None        # rehearsal: raise inside this step
 
 
@@ -101,13 +124,12 @@ def step_collect(ctx: Context) -> str:
 
 
 def step_load(ctx: Context) -> str:
-    import psycopg
     from pg.load import load
     if not ctx.dsn:
         raise RuntimeError("load needs XMETRICS_PG_DSN (the owner login)")
     if not ctx.run_id:
         raise RuntimeError("load needs a run_id (collect first, or pass --run)")
-    with psycopg.connect(ctx.dsn) as conn:
+    with connect(ctx.dsn) as conn:
         res = load(conn, ctx.db, run_id=ctx.run_id)
     return str(res)
 
@@ -117,7 +139,6 @@ def step_diff(ctx: Context) -> str:
     the report the dashboard shows. Then recompute it in Python over the local SQLite file
     and refuse to finish if the two disagree on any account both sides can see — the CI
     assertion (tests/test_pg.py), repeated on every scheduled run, on real data."""
-    import psycopg
     from pg.report import changes_from_sql
     from xmetrics import diff as df
     from xmetrics.store import Store
@@ -125,7 +146,7 @@ def step_diff(ctx: Context) -> str:
         raise RuntimeError("diff needs a run_id")
     if not ctx.dsn:
         raise RuntimeError("diff needs XMETRICS_PG_DSN")
-    with psycopg.connect(ctx.dsn) as conn:
+    with connect(ctx.dsn) as conn:
         res = changes_from_sql(conn, ctx.run_id)
     df.write_outputs(res, ctx.out)
 
@@ -209,6 +230,18 @@ def retry(attempt_id: int, ctx: Context, ledger: Ledger, notifier: notify.Notifi
                         start_from=prev.step, retry_of=attempt_id, host=host)
 
 
+def recover_interrupted(ledger: Ledger, notifier: notify.Notifier) -> list:
+    """Close every attempt left 'running' by a process that died, and say so once. Call only
+    while holding the pipeline lock: that is what makes 'running' mean 'dead'."""
+    dead = ledger.sweep_interrupted()
+    if dead:
+        log.warning("closed %d interrupted attempt(s): %s", len(dead), ", ".join(f"#{a.id}" for a in dead))
+        if notifier.send(notify.interrupted_message(dead)):
+            for a in dead:
+                ledger.alerted(a.id)
+    return dead
+
+
 # ----------------------------------------------------------------------------- cli --
 def read_handles(path: Path) -> list[str]:
     """First column of a CSV (header 'handle'), or one handle per line."""
@@ -229,13 +262,19 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--handles-file", default="docs/remeasure-20.csv", help="accounts to collect (CSV with a 'handle' column)")
     p.add_argument("--all", action="store_true", help="collect every tracked account instead of --handles-file")
     p.add_argument("--posts", type=int, default=20)
-    p.add_argument("--headed", action="store_true", help="show the browser (default: headless)")
+    # Headed by default. On 2026-10-08 the headless browser was answered with a download instead of
+    # x.com/home on every try; the headed one collected 19 of 20. The alert's retry command has no
+    # flags, so the default has to be the mode that works.
+    p.add_argument("--headless", action="store_true", help="no browser window (not verified against X; see ops/README.md)")
+    p.add_argument("--headed", action="store_true", help=argparse.SUPPRESS)   # the default now; kept so old commands still run
     p.add_argument("--trigger", choices=("scheduled", "manual"), default="manual")
     p.add_argument("--from", dest="start_from", choices=STEPS, default="collect", help="start at this step")
     p.add_argument("--run", help="collector run_id to load/diff when starting after collect")
     p.add_argument("--retry", type=int, metavar="ID", help="redo failed attempt ID from the step that failed")
     p.add_argument("--fail-at", choices=STEPS, help="rehearsal: fail inside this step (records + alerts)")
     p.add_argument("--dsn", help="owner DSN (default: $XMETRICS_PG_DSN)")
+    p.add_argument("--if-due", type=float, metavar="DAYS",
+                   help="do nothing unless the last successful run started DAYS or more ago (the scheduler's mode)")
     args = p.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
@@ -248,17 +287,36 @@ def main(argv: list[str] | None = None) -> int:
     handles = [] if args.all else read_handles(Path(args.handles_file))
     ctx = Context(db=Path(args.db), out=Path(args.out), profile=Path(args.profile), handles=handles,
                   everything=args.all, posts=args.posts, dsn=dsn, run_id=args.run,
-                  headless=not args.headed, fail_at=args.fail_at)
+                  headless=args.headless and not args.headed, fail_at=args.fail_at)
 
     import psycopg
+    from datetime import datetime, timezone
     from .ledger import PgLedger
-    with psycopg.connect(dsn, autocommit=True) as conn:
+    notifier, host = notify.from_env(), socket.gethostname()
+    try:
+        conn = connect(dsn, autocommit=True)
+    except psycopg.OperationalError as e:
+        # No database, so no ledger row to write. The message must not depend on it.
+        err = str(e).strip() or repr(e)
+        log.error("database unreachable: %s", err)
+        sent = notifier.send(notify.unreachable_message(host, err, CONNECT_TIMEOUT))
+        print("database unreachable — nothing ran" + (" (alert sent)" if sent else ""))
+        return 1
+    with conn:
+        if not conn.execute("SELECT pg_try_advisory_lock(%s)", (LOCK_KEY,)).fetchone()[0]:
+            print("another pipeline attempt holds the lock — nothing to do")
+            return 0
         ledger = PgLedger(conn)
-        notifier = notify.from_env()
+        recover_interrupted(ledger, notifier)
+        if args.if_due is not None and not args.retry:
+            last = ledger.last_ok_run()
+            if not is_due(last, datetime.now(timezone.utc), args.if_due):
+                print(f"not due: last successful run started {last:%Y-%m-%d %H:%M} UTC (runs every {args.if_due:g} days)")
+                return 0
         if args.retry:
-            res = retry(args.retry, ctx, ledger, notifier)
+            res = retry(args.retry, ctx, ledger, notifier, host=host)
         else:
-            res = run_pipeline(ctx, ledger, notifier, trigger=args.trigger, start_from=args.start_from)
+            res = run_pipeline(ctx, ledger, notifier, trigger=args.trigger, start_from=args.start_from, host=host)
     print(f"attempt #{res.attempt_id}: {res.status}"
           + (f" at {res.failed_step}: {res.detail}" if res.failed_step else f" — {res.detail}")
           + (" (alert sent)" if res.alerted else ""))

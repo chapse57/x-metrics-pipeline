@@ -15,6 +15,9 @@
 services:
   postgres:
     image: postgres:16
+    # Comes back with Docker Desktop after a reboot. Without it the database stayed down after
+    # the PC restarted and the 2026-10-04 scheduled run waited on it until the PC was switched off.
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ${PG_OWNER_USER:-xmetrics}
       POSTGRES_PASSWORD: ${PG_OWNER_PASSWORD:-xmetrics}
@@ -52,6 +55,7 @@ services:
     depends_on:
       setup:
         condition: service_completed_successfully
+    restart: unless-stopped
     environment:
       XMETRICS_API_DSN: postgresql://${API_USER:-xmetrics_api}:${API_PASSWORD:-xmetrics_api}@postgres:5432/${PG_DB:-xmetrics}
       XMETRICS_STALE_AFTER_DAYS: "8"
@@ -64,6 +68,7 @@ services:
   #   docker compose up -d metabase        ->  http://localhost:3000   (first start ~1 min)
   metabase:
     image: metabase/metabase:latest
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy

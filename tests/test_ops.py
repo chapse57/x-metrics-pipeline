@@ -16,8 +16,9 @@ from pathlib import Path
 import pytest
 
 from ops import notify
-from ops.ledger import ABANDONED_AFTER, ABANDONED_DETAIL, MemoryLedger
-from ops.pipeline import Context, read_handles, retry, run_pipeline
+from ops import pipeline
+from ops.ledger import ABANDONED_AFTER, ABANDONED_DETAIL, INTERRUPTED_DETAIL, MemoryLedger
+from ops.pipeline import Context, is_due, read_handles, recover_interrupted, retry, run_pipeline
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -137,6 +138,58 @@ def test_a_running_row_older_than_the_limit_is_marked_failed_at_next_start():
     fresh = led.start("manual", "pc", None)                  # start() sweeps first
     assert led.get(stuck).status == "failed" and led.get(stuck).detail == ABANDONED_DETAIL
     assert led.get(fresh).status == "running"
+
+
+# ------------------------------------- 4b. what 2026-10-04 taught (ops/README.md) --
+def test_an_interrupted_attempt_is_closed_and_reported_once_at_the_next_start():
+    """A shutdown kills the process mid-run: no finish, no message. The next start, holding the
+    lock, closes it however young it is and sends one message naming it and its retry."""
+    led, spy = MemoryLedger(), SpyNotifier()
+    cut = led.start("scheduled", "pc", None); led.step(cut, "collect")
+    dead = recover_interrupted(led, spy)
+    assert [a.id for a in dead] == [cut]
+    row = led.get(cut)
+    assert row.status == "failed" and row.detail == INTERRUPTED_DETAIL and row.step == "collect"
+    assert len(spy.sent) == 1 and f"#{cut}" in spy.sent[0] and f"--retry {cut}" in spy.sent[0]
+    assert row.alerted_at is not None
+    assert recover_interrupted(led, spy) == [] and len(spy.sent) == 1     # said once
+
+
+def test_due_means_no_success_yet_or_the_last_one_is_old_enough():
+    from datetime import datetime, timezone
+    now = datetime(2026, 10, 11, 13, 0, tzinfo=timezone.utc)
+    assert is_due(None, now, 6)
+    assert not is_due(now - timedelta(days=5, hours=23), now, 6)
+    assert is_due(now - timedelta(days=6), now, 6)
+    assert is_due(now - timedelta(days=14), now, 6)          # 9/28 -> 10/11: the missed week
+
+
+def test_last_ok_run_counts_only_attempts_that_carried_a_run():
+    led, spy = MemoryLedger(), SpyNotifier()
+    assert led.last_ok_run() is None
+    rehearsal = run_pipeline(ctx(), led, spy, steps=fake_steps([], run_id=None))
+    assert rehearsal.ok and led.last_ok_run() is None              # finished, but no collector run
+    real = run_pipeline(ctx(), led, spy, steps=fake_steps([]))
+    assert led.last_ok_run() == led.get(real.attempt_id).started_at
+
+
+def test_an_unreachable_database_still_sends_the_alert(monkeypatch):
+    """The 10-04 failure: the server takes the connection and never answers. The pipeline must
+    give up within the limit and alert without the ledger, which lives in that database."""
+    import socket
+    import time
+    hole = socket.socket(); hole.bind(("127.0.0.1", 0)); hole.listen(8)    # accepts, never speaks
+    port = hole.getsockname()[1]
+    spy = SpyNotifier()
+    monkeypatch.setattr(pipeline, "CONNECT_TIMEOUT", 2)
+    monkeypatch.setattr(notify, "from_env", lambda: spy)
+    t = time.monotonic()
+    try:
+        rc = pipeline.main(["--dsn", f"postgresql://x:y@127.0.0.1:{port}/x", "--trigger", "scheduled", "--if-due", "6"])
+    finally:
+        hole.close()
+    assert rc == 1 and time.monotonic() - t < 15
+    assert len(spy.sent) == 1 and "could not reach the database" in spy.sent[0] and "2 s" in spy.sent[0]
 
 
 # ------------------------------------------------------------------ 5. the message --
@@ -301,3 +354,42 @@ def test_diff_step_writes_the_sql_report_and_refuses_a_disagreement(owner, tmp_p
             step_diff(c)
     finally:
         owner.execute("UPDATE raw.measurements SET followers = followers - 1000 WHERE handle = %s AND run_id = %s", (handle, run))
+
+
+# ----------------------------------------- 7. the lock, the sweep and --if-due in SQL --
+@pg
+def test_pg_sweep_closes_running_rows_of_any_age(owner):
+    from ops.ledger import PgLedger
+    led, spy = PgLedger(owner), SpyNotifier()
+    cut = led.start("scheduled", "pc", None); led.step(cut, "collect")      # seconds old, not hours
+    dead = recover_interrupted(led, spy)
+    assert cut in [a.id for a in dead]
+    assert led.get(cut).status == "failed" and led.get(cut).detail == INTERRUPTED_DETAIL
+    assert owner.execute("SELECT count(*) FROM ops.pipeline_runs WHERE status = 'running'").fetchone()[0] == 0
+    assert led.get(cut).alerted_at is not None and len(spy.sent) == 1
+
+
+@pg
+def test_a_second_attempt_does_nothing_while_one_holds_the_lock(owner, monkeypatch):
+    spy = SpyNotifier()
+    monkeypatch.setattr(notify, "from_env", lambda: spy)
+    before = owner.execute("SELECT count(*) FROM ops.pipeline_runs").fetchone()[0]
+    with psycopg.connect(DSN, autocommit=True) as other:
+        other.execute("SELECT pg_advisory_lock(%s)", (pipeline.LOCK_KEY,))
+        assert pipeline.main(["--dsn", DSN, "--trigger", "scheduled"]) == 0
+    assert owner.execute("SELECT count(*) FROM ops.pipeline_runs").fetchone()[0] == before and spy.sent == []
+
+
+@pg
+def test_if_due_skips_when_the_last_successful_run_is_recent(owner, monkeypatch, capsys):
+    from ops.ledger import PgLedger
+    spy = SpyNotifier()
+    monkeypatch.setattr(notify, "from_env", lambda: spy)
+    run_pipeline(ctx(), PgLedger(owner), spy, steps=fake_steps([]), trigger="scheduled")   # ok, with run R1, just now
+    before = owner.execute("SELECT count(*) FROM ops.pipeline_runs").fetchone()[0]
+    assert pipeline.main(["--dsn", DSN, "--trigger", "scheduled", "--if-due", "6"]) == 0
+    assert "not due" in capsys.readouterr().out
+    assert owner.execute("SELECT count(*) FROM ops.pipeline_runs").fetchone()[0] == before
+    # the lock went with main()'s connection: the next attempt can take it
+    assert owner.execute("SELECT pg_try_advisory_lock(%s)", (pipeline.LOCK_KEY,)).fetchone()[0]
+    owner.execute("SELECT pg_advisory_unlock(%s)", (pipeline.LOCK_KEY,))

@@ -246,7 +246,15 @@ The weekly `changes.md` is read **from the database** (`mart.changes_since`, via
 because the database holds every run from every file and the local SQLite does not; then the same
 report is recomputed in Python over the file and the step fails if they disagree — the week-1 CI
 assertion, repeated on every scheduled run, on real data. `ops/schedule_windows.ps1` registers the
-Sunday 22:00 job on the PC that holds the logged-in browser profile; `ops/README.md` has the rest.
+job on the PC that holds the logged-in browser profile: Sunday 22:00, plus a catch-up 5 minutes after
+each logon that runs only if the last success is 6+ days old.
+
+**The first scheduled run (2026-10-04) failed silently**, and that is in here on purpose: the
+database container had not come back after a reboot, the connection waited with no limit, the PC was
+switched off 40 minutes later, and the row, the log and the alert were all downstream of the database.
+Now every connection gives up after 10 s, an unreachable database sends its own message, a run cut
+off by a shutdown is closed and reported at the next start, and a missed week is caught up at the
+next logon. The evidence and the fixes, line by line: `ops/README.md`.
 
 ## Live run (2026-09-06, Windows, logged-in session) — evidence in `docs/live-run-2026-09-06/`
 
@@ -364,7 +372,7 @@ It is five regexes, and that is deliberate. Its job is not to detect spam well; 
 xmetrics/   parse · metrics · store · legacy · validate · agent · export · diff · collect · cli
 pg/         PostgreSQL: migrate (schema/001-006) · load (SQLite -> raw) · roles · report (the change report, back from SQL) · raw / core / mart / ops
 ops/        pipeline (collect -> load -> diff, one command) · ledger (ops.pipeline_runs) · notify (Slack, failure only) · Task Scheduler / cron
-tests/      111 test cases in 93 test functions, parametrize expanded (parser formats, metrics, legacy cross-check, guardrails, diff rule + run targets + thresholds, rounding, SQL == Python, read API + read-only role, API keys + per-key limit + MCP caps, backup -> restore -> row counts and checksums, pipeline ledger + retry + alert + SQL report). CI runs all of them against Postgres 16 and fails on any skip.
+tests/      118 test cases in 100 test functions, parametrize expanded (parser formats, metrics, legacy cross-check, guardrails, diff rule + run targets + thresholds, rounding, SQL == Python, read API + read-only role, API keys + per-key limit + MCP caps, backup -> restore -> row counts and checksums, pipeline ledger + retry + alert + SQL report, interrupted runs, unreachable database, the pipeline lock). CI runs all of them against Postgres 16 and fails on any skip.
 fixtures/   captured aria-labels + the real 2026-09 deliverable
 out/        generated: CSV, dashboard, validation report, agent audit
 mcp_server.py  ·  n8n/  ·  .github/workflows/weekly.yml

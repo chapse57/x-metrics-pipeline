@@ -7,8 +7,8 @@ three answers, as code.
 | question | where the answer lives | how you see it |
 |---|---|---|
 | did it run? | `ops.pipeline_runs`, one row per attempt, written **before** the first step starts | `/health` → `last_pipeline`; Metabase card "Pipeline runs" |
-| did it finish? | the row's `status`: `ok` / `failed` (+ the step that failed and the error) / `running` | same; a `running` row older than 6 h is marked failed at the next start |
-| who knows? | one Slack message on failure, none on success (`ops/notify.py`) | your phone |
+| did it finish? | the row's `status`: `ok` / `failed` (+ the step that failed and the error) / `running` | same; a `running` row with no process behind it is marked failed at the next start |
+| who knows? | one Slack message on failure, none on success (`ops/notify.py`) — also when the database itself cannot be reached, and for an attempt that was cut off | your phone |
 | how old is the data now? | `mart.v_runs` (weeks 1–3) | gauge turns red after 8 days; `/health` says `stale: true` |
 | what do I do? | the message ends with the retry command | `python -m ops.pipeline --retry <id>` |
 
@@ -20,7 +20,13 @@ python -m ops.pipeline --trigger scheduled # same, tagged as the scheduler's run
 python -m ops.pipeline --from load --run 20260923T091254Z-playwright   # collector already ran
 python -m ops.pipeline --retry 12          # attempt #12 failed: redo it from the failed step
 python -m ops.pipeline --fail-at load      # rehearse a failure: row + Slack message, no harm done
+python -m ops.pipeline --trigger scheduled --if-due 6   # the scheduler's mode: only if the last success is 6+ days old
 ```
+
+Every start does three things before any step: reach the database within 10 s
+(`XMETRICS_PG_CONNECT_TIMEOUT`) or send a message that does not need it and exit 1 · take the
+pipeline lock, or exit 0 if another attempt has it · close any attempt still marked `running`
+(holding the lock proves its process is gone) and send one message about it.
 
 Needs `XMETRICS_PG_DSN` (the **owner** login — this is the one process that writes) and,
 for collect, the browser profile from `xmetrics login`. `XMETRICS_SLACK_WEBHOOK` is optional:
@@ -74,9 +80,13 @@ powershell -ExecutionPolicy Bypass -File ops\schedule_windows.ps1        # Sunda
 schtasks /Run /TN "x-metrics weekly"                                     # try it now
 ```
 
-`run_weekly.cmd` activates `.venv`, loads `ops\env.cmd`, and writes one log per run to
-`out\logs\pipeline-<stamp>.log`. The task runs only while you are logged on (the collector
-needs your browser profile) and catches up if the PC was asleep at 22:00.
+`run_weekly.cmd` activates `.venv`, loads `ops\env.cmd`, starts the Postgres container and
+waits up to 2 minutes for it, then runs `--if-due 6`, writing one log per start to
+`out\logs\pipeline-<stamp>.log` (unbuffered, so a killed process keeps what it said). The task
+has two triggers: **Sunday 22:00**, and **5 minutes after each logon**. Because of `--if-due`,
+the logon start does nothing in a normal week; it collects only when the last successful run is
+6+ days old — after a Sunday the PC was off, or a run a shutdown cut short. The task runs only
+while you are logged on (the collector needs your browser profile).
 
 **Linux / macOS:**
 
@@ -107,14 +117,75 @@ Without a server: an ok attempt records every step and sends nothing · a failur
 step, keeps the steps that passed, records the collector run, alerts exactly once · an alert
 that could not be sent is not marked sent · retry starts at the failed step with the same run
 · a retry of a failed collect collects again under a new run · retry refuses an attempt that
-did not fail · an abandoned `running` row is marked failed · the message format · the Slack
+did not fail · an abandoned `running` row is marked failed · an interrupted attempt is
+closed and reported once · the due rule · a database that takes the connection and never
+answers is given up on within the limit and still alerts · the message format · the Slack
 POST · the handles file.
 
 With `XMETRICS_PG_DSN`: the same contract against `ops.pipeline_runs` and the views · the
 abandoned-row sweep in SQL · the reader can read the ledger and cannot write it · `/health`
 reports the last attempt and goes `ok: false` on a failed one · the report rebuilt from SQL
 equals the Python one for every run · the diff step refuses a database that disagrees with
-the file.
+the file · the interrupted-row sweep in SQL, at any age · a second attempt does nothing while
+one holds the lock · `--if-due` skips after a recent success and releases the lock.
+
+## The first scheduled run failed, and nothing said so (2026-10-04)
+
+What was found on 10-08, in the order it was found:
+
+| evidence | what it said |
+|---|---|
+| Task Scheduler | last run 2026-10-04 22:00, result `0xC000013A` (console closed / Ctrl+C / logoff / shutdown — not the 2 h limit) |
+| `out\logs\pipeline-20261004-2200.log` | created at 22:00, **0 bytes** |
+| Windows event 1074 | power off from the Start menu at **22:40:52** |
+| `ops.pipeline_runs` | 4 rows, all 09-28 rehearsals — **no row for 10-04** |
+| `docker ps` on 10-08 | Docker Desktop up, **no container running** |
+| starting Postgres on 10-08 | "not yet accepting connections — consistent recovery state has not been yet reached" for about a minute (a hard power-off with the container running, some earlier day) |
+
+So: after a restart Docker Desktop came up but the Postgres container did not (no restart
+policy). At 22:00 the pipeline tried to connect, and the connection waited with no limit —
+a normal start logs its first line within a second; this one logged nothing in 40 minutes and
+wrote no row. At 22:40 the PC was switched off and the process died. No row, no log line, no
+Slack message: every one of the three was downstream of the database.
+
+Reproduced on 10-08 with the fix in place: `docker compose stop postgres`, then the pipeline.
+The answer was **`connection timeout expired`**, not "connection refused": on this PC, with the
+container stopped, a connection to `localhost:5432` is taken and never answered (Docker Desktop's
+port forwarding), so without a limit it waits for ever. With the 10 s limit the pipeline gave up
+and the message went out with no database: `docs/slack-db-unreachable.png`.
+
+What changed, one line per hole:
+
+| hole | now |
+|---|---|
+| container not up after a reboot | `restart: unless-stopped` on postgres, api, metabase; `run_weekly.cmd` also starts postgres and waits for `pg_isready` |
+| connection waits forever | `connect_timeout` 10 s on every connection the pipeline opens |
+| the alert needed the database | an unreachable database sends its own message, no ledger involved |
+| killed process leaves nothing | log written unbuffered; the next start (holding the lock) closes the orphan `running` row and says so |
+| a missed or cut-off week waits for next Sunday | logon trigger + `--if-due 6`: caught up at the next logon |
+| found while fixing, never reached: the last line the pipeline prints has an em dash, which a Korean Windows (cp949) cannot write into the redirected log — a successful run would have ended in a traceback and exit 1 | `PYTHONUTF8=1` in `run_weekly.cmd` |
+
+### The same morning: the first run through the scheduled path (10-08)
+
+With the fixes in, `schtasks /Run` started the job for real. `--if-due 6` found the last success
+was 10 days old and ran it. What followed, attempt by attempt — each one recorded, each failure
+one Slack message with its retry command:
+
+| attempt | what happened | what it showed |
+|---|---|---|
+| #5 scheduled | collect failed: the **headless** browser was answered with a download instead of `x.com/home`, four tries | the pipeline had never collected headless before: the 09-23 collection was headed, the 09-28 rehearsals started at load |
+| #6 retry, headed | collect failed: **not logged in** | the session cookies saved by `xmetrics import-cookies` on 09-06 had stopped working, and they are re-applied on every launch |
+| — | cookies imported again from the browser where X was logged in | |
+| #7 retry, headed | **ok**: 20 tried, 19 measured, 1 could not be read · load · diff: 7 flagged, 0 new, 0 dropped · **SQL == Python on 19 of 19 rows** | the first run where every comparable row was compared (09-28 had 3 of 20: the baseline then lived only in the legacy file) |
+
+Changed because of it: the pipeline is **headed by default** (`--headless` to opt out, not verified
+against X), so the retry command in an alert runs in the mode that works. Known, not changed yet: a
+session file saved by `import-cookies` is re-applied on every launch and overrides the browser
+profile's own login, so a stale file breaks collection even after a fresh `xmetrics login`.
+
+What still is not covered: if the PC stays off, nothing runs and nothing is sent from it —
+the only signal is the dashboard's age gauge turning red after 8 days. A server, or a
+check that runs somewhere else, is the fix for that; on one PC it is a known limit.
 
 ## Metabase's own database (seen 2026-09-28)
 

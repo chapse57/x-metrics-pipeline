@@ -68,6 +68,28 @@ def failure_message(attempt_id: int, step: str, error: str, host: str | None, re
             f"Re-run only this attempt: `{retry_cmd}`")
 
 
+def unreachable_message(host: str | None, error: str, waited: int) -> str:
+    """The database did not answer, so there is no attempt row to point at. Sent anyway: an
+    alert that needs the database to go out is no alert on the night the database is down."""
+    first = error.strip().splitlines()[0] if error.strip() else "(no error text)"
+    return (f":red_circle: x-metrics pipeline could not reach the database"
+            f"{f' on {host}' if host else ''} (gave up after {waited} s)\n"
+            f"> {first}\n"
+            f"Nothing was collected and nothing was written down. Start Postgres "
+            f"(`docker compose up -d postgres`), then run it again: `python -m ops.pipeline --trigger manual`")
+
+
+def interrupted_message(attempts) -> str:
+    """Attempts found 'running' with no process behind them: they never got to send their own message."""
+    lines = [f":warning: x-metrics pipeline: {len(attempts)} earlier attempt(s) stopped without finishing "
+             f"(PC shut down, window closed, or killed). Marked failed now."]
+    for a in attempts:
+        when = a.started_at.strftime("%Y-%m-%d %H:%M UTC") if a.started_at else "?"
+        retry = f"`python -m ops.pipeline --retry {a.id}`" if a.step else "nothing to retry: it stopped before its first step"
+        lines.append(f"> #{a.id} started {when}{f' on {a.host}' if a.host else ''}, in *{a.step or 'start'}* — {retry}")
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="send one message to the configured Slack webhook")
     p.add_argument("text")

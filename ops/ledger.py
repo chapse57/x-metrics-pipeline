@@ -3,9 +3,14 @@ for tests. The pipeline talks to a Ledger and nothing else, so the same code pat
 with no database and run with one.
 
 An attempt's life: start() -> step() per step -> finish_ok() | finish_failed() (-> alerted()).
-A process that dies between start() and finish leaves a 'running' row; the next start()
-calls sweep() and marks any 'running' row older than ABANDONED_AFTER as failed, because
-a run that has not finished in that long has not finished.
+A process that dies between start() and finish leaves a 'running' row. Two ways it gets closed:
+
+- sweep_interrupted(): the pipeline calls it once it holds the pipeline lock (ops/pipeline.py).
+  Holding the lock proves no other attempt is alive, so every 'running' row is dead, whatever
+  its age: the PC was shut down, the window was closed, the process was killed. The pipeline
+  then sends one message about it. Seen for real on 2026-10-04 (ops/README.md).
+- sweep(): start() still marks 'running' rows older than ABANDONED_AFTER as failed, for any
+  caller that writes rows without the lock.
 """
 from __future__ import annotations
 
@@ -15,6 +20,8 @@ from typing import Protocol
 
 ABANDONED_AFTER = timedelta(hours=6)
 ABANDONED_DETAIL = "no finish recorded — the process died or was killed before it could report"
+INTERRUPTED_DETAIL = ("interrupted — the process stopped without reporting (PC shut down, window closed "
+                      "or killed); found by the next start")
 
 
 @dataclass
@@ -42,6 +49,8 @@ class Ledger(Protocol):
     def alerted(self, attempt_id: int) -> None: ...
     def get(self, attempt_id: int) -> Attempt | None: ...
     def sweep(self, now: datetime | None = None) -> list[int]: ...
+    def sweep_interrupted(self) -> list[Attempt]: ...
+    def last_ok_run(self) -> datetime | None: ...
 
 
 def _now() -> datetime:
@@ -88,6 +97,18 @@ class MemoryLedger:
                 a.status, a.detail, a.finished_at = "failed", ABANDONED_DETAIL, now
                 swept.append(a.id)
         return swept
+
+    def sweep_interrupted(self):
+        out = []
+        for a in self.rows.values():
+            if a.status == "running":
+                a.status, a.detail, a.finished_at = "failed", INTERRUPTED_DETAIL, _now()
+                out.append(a)
+        return out
+
+    def last_ok_run(self):
+        oks = [a.started_at for a in self.rows.values() if a.status == "ok" and a.run_id]
+        return max(oks) if oks else None
 
 
 # ------------------------------------------------------------------------- postgres --
@@ -143,3 +164,17 @@ class PgLedger:
                 "WHERE status = 'running' AND started_at < %s - %s::interval RETURNING id",
                 (ABANDONED_DETAIL, now or _now(), now or _now(), f"{int(ABANDONED_AFTER.total_seconds())} seconds")).fetchall()
         return [r[0] for r in rows]
+
+    def sweep_interrupted(self):
+        with self.conn.transaction():
+            ids = [r[0] for r in self.conn.execute(
+                "UPDATE ops.pipeline_runs SET status = 'failed', detail = %s, finished_at = now() "
+                "WHERE status = 'running' RETURNING id", (INTERRUPTED_DETAIL,)).fetchall()]
+        return [self.get(i) for i in sorted(ids)]
+
+    def last_ok_run(self):
+        """When the newest successful attempt that carried a collector run started: what
+        `--if-due` measures from. A retry that finished a load counts; a rehearsal row without a
+        run does not."""
+        return self.conn.execute(
+            "SELECT max(started_at) FROM ops.pipeline_runs WHERE status = 'ok' AND run_id IS NOT NULL").fetchone()[0]
