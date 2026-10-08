@@ -63,6 +63,10 @@ then read the same nine figures off each dashboard and fill `docs/dashboard-chec
 | figure | psql | Metabase | Power BI | same? |
 |---|---|---|---|---|
 
+**Done 2026-10-08, on real data: [`docs/dashboard-checks.md`](../docs/dashboard-checks.md) — nine of
+nine agree** (Power BI read through a DAX query over its own import, so it is a second engine, not
+the same SQL shown twice).
+
 Two differences are expected and are conventions, not bugs: **time zone** (psql and Metabase show
 UTC because the API and Metabase run in UTC; Power BI Desktop shows your Windows zone, +9 h) and
 **rounding on display** (a tool may show 0.16 for 0.1600). Anything else is a bug: find it before

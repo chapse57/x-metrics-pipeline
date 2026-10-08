@@ -24,7 +24,7 @@ Views arrive as tables. Nothing here writes — the login cannot.
 |---|---|---|
 | Data as of (days since the latest run; red after 8) | Card | measure **Age days** (below). Format → Callout value → Color → fx → Rules: `>= 0 and < 8` green `#2E8B57`, `>= 8 and < 100000` red |
 | Followers vs engagement | Scatter chart | Values `display`, X `followers`, Y `engagement_rate`, Legend `tier`. Format → X axis → Range → **Logarithmic scale on**; X axis → Values → **Display units: None** |
-| Accounts (latest measurement, 95 accounts) | Table | `mart v_latest`: display, tier, followers, engagement_rate, views_to_followers, days_since_last_post. Filter on this visual: `status` = measured (95). Totals off |
+| Accounts (latest measurement, measured only) — no count in the title: a typed number cannot follow the data (it said 95 after the 10-08 run measured 94) | Table | `mart v_latest`: display, tier, followers, engagement_rate, views_to_followers, days_since_last_post. Filter on this visual: `status` = measured. Totals off |
 | What changed (latest run vs each account's previous measurement) | Table | `mart v_changes`: display, kind, flags, followers_prev, followers_now, followers_delta_pct, engagement_delta_pp, views_delta_pct (20 rows) |
 
 Power BI names the imported views `mart v_latest`, `mart v_changes`, `mart v_runs` (schema, space,
