@@ -55,7 +55,7 @@ session      + audit   + review     + report     validation   changes.md
 | **export** (`export.py`) | Client CSV (same columns as the hand-made sheet) + `dashboard.html` (no dependencies, opens from disk: search, niche/tier filters, engagement slider, sortable table, followers-vs-engagement scatter, per-account detail). |
 | **diff** (`diff.py`) | Compares the two most recent runs per account (or any two by id). Followers, engagement, views/followers, tier, days-since-last-post — every delta reported; a change is *flagged* only past a threshold (`--followers-pct 5`, `--engagement-pp 0.2`, `--views-pct 25`, `--silent-days 14`). Accounts that appear or disappear between runs are listed separately. `--fail-on-flags` lets a scheduler page someone only when something moved. Deltas are computed from stored rows, never estimated. |
 | **schedule** | `.github/workflows/weekly.yml`: weekly cron + on push. Tests, then validate `--strict` against the hand-made sheet (a failed check fails the job), export, `diff`; the Slack summary leads with what changed. With no pushed DB it seeds from the 2026-09 deliverable in `fixtures/`, so CI never validates an empty file. Collection stays on a self-hosted runner (needs the logged-in profile). `n8n/x-metrics-weekly.json` for teams on n8n. |
-| **MCP** (`mcp_server.py`) | MCP server over the Postgres store: `search_accounts`, `account`, `changes`. Read-only login, API key per call, at most 50 rows per answer (cut answers say `truncated`). |
+| **MCP** (`mcp_server.py`) | MCP server over the Postgres store: `search_accounts`, `account`, `changes`, `validation_summary`, `agent_audit`. Read-only login, API key per call, at most 50 rows per answer (cut answers say `truncated`). The last two read `mart.v_validation_issues` (the pre-export checks of `validate.py`, rewritten in SQL and tested equal to the Python ones) and `raw.agent_audit` (every LLM classification and which guardrail failed) — `pg/schema/008`. |
 
 ## The guardrail — what the agent gets wrong, and what catches it
 
@@ -370,9 +370,9 @@ It is five regexes, and that is deliberate. Its job is not to detect spam well; 
 
 ```
 xmetrics/   parse · metrics · store · legacy · validate · agent · export · diff · collect · cli
-pg/         PostgreSQL: migrate (schema/001-006) · load (SQLite -> raw) · roles · report (the change report, back from SQL) · raw / core / mart / ops
+pg/         PostgreSQL: migrate (schema/001-008) · load (SQLite -> raw) · roles · report (the change report, back from SQL) · raw / core / mart / ops
 ops/        pipeline (collect -> load -> diff, one command) · ledger (ops.pipeline_runs) · notify (Slack, failure only) · Task Scheduler / cron
-tests/      118 test cases in 100 test functions, parametrize expanded (parser formats, metrics, legacy cross-check, guardrails, diff rule + run targets + thresholds, rounding, SQL == Python, read API + read-only role, API keys + per-key limit + MCP caps, backup -> restore -> row counts and checksums, pipeline ledger + retry + alert + SQL report, interrupted runs, unreachable database, the pipeline lock). CI runs all of them against Postgres 16 and fails on any skip.
+tests/      122 test cases in 104 test functions, parametrize expanded (parser formats, metrics, legacy cross-check, guardrails, diff rule + run targets + thresholds, rounding, SQL == Python (change report and validation), read API + read-only role, API keys + per-key limit + MCP caps, backup -> restore -> row counts and checksums, pipeline ledger + retry + alert + SQL report, interrupted runs, unreachable database, the pipeline lock). CI runs all of them against Postgres 16 and fails on any skip.
 fixtures/   captured aria-labels + the real 2026-09 deliverable
 out/        generated: CSV, dashboard, validation report, agent audit
 mcp_server.py  ·  n8n/  ·  .github/workflows/weekly.yml

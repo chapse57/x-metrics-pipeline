@@ -80,3 +80,27 @@ def changes() -> dict:
     flagged = [r for r in rows if r["flags"]]                  # what moved first, so a cap keeps the signal
     rest = [r for r in rows if not r["flags"]]
     return _capped(flagged + rest)
+
+
+def validation_summary() -> dict:
+    """The pre-export checks (xmetrics/validate.py), computed in SQL (mart.v_validation_issues):
+    how many rows were checked and how many issues each check raised. Same shape as the
+    SQLite-era tool."""
+    with _connect() as conn:
+        _authorize(conn, "validation_summary")
+        n = conn.execute(q.VALIDATION_ROWS).fetchone()["n"]
+        counts = conn.execute(q.VALIDATION_COUNTS).fetchall()
+    return {"rows": n, "issues": {f"{r['check']} ({r['severity']})": r["n"] for r in counts}}
+
+
+def agent_audit() -> dict:
+    """How the LLM classifier did behind the guardrails: verdicts, which guardrails fired, and
+    which classifier ran. Same shape as Store.agent_audit_summary()."""
+    with _connect() as conn:
+        _authorize(conn, "agent_audit")
+        verdicts = {r["verdict"]: r["n"] for r in conn.execute(q.AUDIT_VERDICTS)}
+        fired = {r["guardrail"]: r["n"] for r in conn.execute(q.AUDIT_CHECKS)}
+        classifiers = {r["classifier"]: r["n"] for r in conn.execute(q.AUDIT_CLASSIFIERS)}
+    return {"attempts": sum(verdicts.values()), "by_verdict": verdicts, "guardrail_fired": fired,
+            "classifiers": classifiers}
+

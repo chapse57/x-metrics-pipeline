@@ -72,3 +72,13 @@ LATEST_PIPELINE = """
 SELECT id, status, trigger, step, run_id, retry_of, started_at, finished_at, seconds, detail
 FROM mart.v_pipeline_latest
 """
+
+# ---- MCP: validation and the LLM agent audit (pg/schema/008) -------------------------
+VALIDATION_ROWS = "SELECT count(*) AS n FROM core.validation_rows"
+VALIDATION_COUNTS = """
+SELECT "check", severity, count(*)::int AS n FROM mart.v_validation_issues
+GROUP BY "check", severity ORDER BY "check", severity
+"""
+AUDIT_VERDICTS = "SELECT verdict, n FROM mart.v_agent_audit_verdicts ORDER BY verdict"
+AUDIT_CHECKS = "SELECT guardrail, n FROM mart.v_agent_audit_checks ORDER BY guardrail"
+AUDIT_CLASSIFIERS = "SELECT classifier, n FROM mart.v_agent_audit_classifiers ORDER BY classifier"

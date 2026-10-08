@@ -1,5 +1,5 @@
-"""SQLite -> PostgreSQL. Copies runs, accounts, measurements and posts from one or more
-xmetrics SQLite files into the `raw` schema, column for column.
+"""SQLite -> PostgreSQL. Copies runs, accounts, measurements, posts and the LLM agent audit from
+one or more xmetrics SQLite files into the `raw` schema, column for column.
 
 Idempotent by construction: every insert is ON CONFLICT ... DO UPDATE on the same primary
 key the SQLite tables use, so loading the same file twice changes nothing, and loading a
@@ -32,10 +32,11 @@ class LoadResult:
     measurements: int
     posts: int
     targets: int = 0
+    audit: int = 0
 
     def __str__(self) -> str:
         return (f"{self.source_db}: runs {self.runs}, accounts {self.accounts}, "
-                f"measurements {self.measurements}, posts {self.posts}, targets {self.targets}")
+                f"measurements {self.measurements}, posts {self.posts}, targets {self.targets}, audit {self.audit}")
 
 
 def _ts(s: str | None) -> datetime | None:
@@ -108,6 +109,16 @@ ON CONFLICT (handle, run_id, status_id) DO UPDATE SET
 """
 
 
+_UPSERT_AUDIT = """
+INSERT INTO raw.agent_audit (source_db, id, handle, at, classifier, raw_output, parsed, verdict, failed_checks)
+VALUES (%s, %s, %s, %s, %s, %s, %s, %s, coalesce(%s, '[]')::jsonb)
+ON CONFLICT (source_db, id) DO UPDATE SET
+  handle = EXCLUDED.handle, at = EXCLUDED.at, classifier = EXCLUDED.classifier,
+  raw_output = EXCLUDED.raw_output, parsed = EXCLUDED.parsed, verdict = EXCLUDED.verdict,
+  failed_checks = EXCLUDED.failed_checks, loaded_at = now()
+"""
+
+
 def load(conn: psycopg.Connection, sqlite_path: str | Path, run_id: str | None = None) -> LoadResult:
     """Load one SQLite file. With run_id, only that run's rows (plus every account, which is
     cheap and keeps foreign keys satisfied). One transaction: a failure loads nothing."""
@@ -126,6 +137,9 @@ def load(conn: psycopg.Connection, sqlite_path: str | Path, run_id: str | None =
     measurements = _rows(sq, f"SELECT * FROM measurements {run_filter}", run_params)
     targets = _targets(sq, run_filter, run_params)
     posts = _rows(sq, f"SELECT * FROM posts {run_filter}", run_params)
+    # the audit is per classification, not per run: always the whole table (it is small)
+    has_audit = sq.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_audit'").fetchone()
+    audit = _rows(sq, "SELECT * FROM agent_audit") if has_audit else []
 
     with conn.transaction(), conn.cursor() as cur:
         cur.executemany(_UPSERT_RUN, [
@@ -148,8 +162,11 @@ def load(conn: psycopg.Connection, sqlite_path: str | Path, run_id: str | None =
             (p["handle"], p["run_id"], p["status_id"], _ts(p["posted_at"]), p["replies"], p["reposts"],
              p["likes"], p["bookmarks"], p["views"], p["is_repost"], p["is_pinned"], p["is_reply"], p["raw_label"])
             for p in posts])
+        cur.executemany(_UPSERT_AUDIT, [
+            (src, x["id"], x["handle"], _ts(x["at"]), x["classifier"], x["raw_output"], x["parsed"],
+             x["verdict"], x["failed_checks"]) for x in audit])
     sq.close()
-    return LoadResult(src, len(runs), len(accounts), len(measurements), len(posts), len(targets))
+    return LoadResult(src, len(runs), len(accounts), len(measurements), len(posts), len(targets), len(audit))
 
 
 def _targets(sq: sqlite3.Connection, run_filter: str, run_params: tuple) -> list[sqlite3.Row]:

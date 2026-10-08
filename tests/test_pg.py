@@ -337,3 +337,112 @@ def test_legacy_measured_at_is_range_end_not_import_time(conn):
     for measured, range_end, recorded in rows:
         assert measured == range_end
         assert recorded != range_end or measured == recorded
+
+
+# ------------------------------- 6. validation and the agent audit, SQL == Python (008) --
+# What the MCP server's validation_summary and agent_audit read. Before 10-02 they were Python
+# over the SQLite file; now they are SQL over raw.*, so they get the same treatment as the change
+# report: computed both ways, asserted equal.
+
+@pytest.fixture
+def fresh(conn):
+    """The real files loaded into rebuilt schemas: earlier tests insert synthetic runs."""
+    from pg.load import load
+    from pg.migrate import migrate
+    conn.execute("DROP SCHEMA IF EXISTS raw, core, mart, pg, ops, auth CASCADE"); conn.commit()
+    migrate(conn)
+    for path in SQLITE_FILES:
+        load(conn, path)
+    return conn
+
+
+def merged_with_posts(tmp_path) -> Store:
+    """merged_store, plus posts: check_recompute rebuilds medians from them."""
+    st = merged_store(tmp_path)
+    with st.tx() as c:
+        for path in SQLITE_FILES:
+            src = Store(path)
+            for r in src.conn.execute("SELECT * FROM posts"):
+                r = dict(r); cols = ", ".join(r); marks = ", ".join("?" * len(r))
+                c.execute(f"INSERT OR REPLACE INTO posts ({cols}) VALUES ({marks})", list(r.values()))
+            src.close()
+    return st
+
+
+def sql_issues(conn) -> list[tuple]:
+    return sorted(conn.execute('SELECT handle, "check", severity, detail FROM mart.v_validation_issues').fetchall())
+
+
+def python_issues(st: Store) -> list[tuple]:
+    from xmetrics.validate import run_all
+    return sorted((i.handle, i.check, i.severity, i.detail) for i in run_all(st))
+
+
+@pytest.mark.skipif(not SQLITE_FILES, reason="no out/*.db to load")
+def test_validation_in_sql_equals_python(fresh, tmp_path):
+    st = merged_with_posts(tmp_path)
+    assert fresh.execute("SELECT count(*) FROM core.validation_rows").fetchone()[0] == len(st.latest_measurements())
+    assert sql_issues(fresh) == python_issues(st)          # handle, check, severity and the detail text
+    st.close()
+
+
+@pytest.mark.skipif(not LIVE_DB.exists(), reason="no out/x.db")
+def test_validation_catches_the_same_bad_rows_in_sql_and_python(fresh, tmp_path):
+    """The real data passes every recompute check, so equality above proves nothing about them.
+    Break the same rows on both sides — a live row (medians rebuilt from posts) and a legacy row
+    (sum of stored medians) — and both must flag them, identically."""
+    st = merged_with_posts(tmp_path)
+    live, live_run = st.conn.execute(
+        "SELECT m.handle, m.run_id FROM measurements m JOIN posts p USING (handle, run_id) "
+        "ORDER BY m.measured_at DESC LIMIT 1").fetchone()
+    legacy = st.conn.execute(
+        "SELECT m.handle FROM measurements m JOIN accounts a USING (handle) WHERE a.status = 'measured' "
+        "AND NOT EXISTS (SELECT 1 FROM posts p WHERE p.handle = m.handle) LIMIT 1").fetchone()[0]
+    edits = [
+        ("UPDATE measurements SET engagement_rate = engagement_rate + 1, posts_measured = posts_measured + 1, "
+         "views_to_followers = views_to_followers + 5, tier = 'Macro (100K+)' WHERE handle = {p} AND run_id = {p}", (live, live_run)),
+        ("UPDATE measurements SET engagement_rate = engagement_rate + 1 WHERE handle = {p}", (legacy,)),
+    ]
+    with st.tx() as c:
+        for sql, args in edits:
+            c.execute(sql.replace("raw.", "").format(p="?"), args)
+    try:
+        for sql, args in edits:
+            fresh.execute(sql.replace("UPDATE measurements", "UPDATE raw.measurements").format(p="%s"), args)
+        got, want = sql_issues(fresh), python_issues(st)
+        assert got == want
+        flagged = {(h, c) for h, c, _, _ in got}
+        assert {(live, "recompute.engagement_rate"), (live, "recompute.posts_measured"),
+                (live, "recompute.views_to_followers"), (legacy, "recompute.engagement_rate")} <= flagged
+        if st.conn.execute("SELECT followers FROM measurements WHERE handle = ? AND run_id = ?",
+                           (live, live_run)).fetchone()[0] < 100_000:
+            assert (live, "recompute.tier") in flagged
+    finally:
+        fresh.rollback()
+        st.close()
+
+
+@pytest.mark.skipif(not SQLITE_FILES, reason="no out/*.db to load")
+def test_agent_audit_in_sql_equals_python_and_reloads_without_doubling(fresh):
+    from collections import Counter
+    from api import mcp_tools
+    from pg.load import load
+    want = {"attempts": 0, "by_verdict": Counter(), "guardrail_fired": Counter(), "classifiers": Counter()}
+    for path in SQLITE_FILES:                  # ids restart in every file: add the files up, do not merge
+        s = Store(path).agent_audit_summary()
+        want["attempts"] += s["attempts"]
+        for k in ("by_verdict", "guardrail_fired", "classifiers"):
+            want[k].update(s[k])
+    n = fresh.execute("SELECT count(*) FROM raw.agent_audit").fetchone()[0]
+    assert n == want["attempts"] > 0
+    for path in SQLITE_FILES:
+        load(fresh, path)
+    assert fresh.execute("SELECT count(*) FROM raw.agent_audit").fetchone()[0] == n
+    # the MCP tool's answer, built from the mart views, is the Python summary
+    from api import queries as q
+    verdicts = dict(fresh.execute(q.AUDIT_VERDICTS).fetchall())
+    fired = dict(fresh.execute(q.AUDIT_CHECKS).fetchall())
+    classifiers = dict(fresh.execute(q.AUDIT_CLASSIFIERS).fetchall())
+    assert (sum(verdicts.values()), verdicts, fired, classifiers) == (
+        want["attempts"], dict(want["by_verdict"]), dict(want["guardrail_fired"]), dict(want["classifiers"]))
+    assert mcp_tools.agent_audit.__doc__ and mcp_tools.validation_summary.__doc__

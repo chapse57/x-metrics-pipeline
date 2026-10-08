@@ -111,3 +111,20 @@ def test_mcp_answers_are_capped_and_say_so(keys, monkeypatch):
     ch = mcp_tools.changes()
     assert ch["returned"] == 10 and ch["truncated"] is True
     assert all(r["flags"] for r in ch["rows"])                    # flagged rows come first
+
+
+def test_mcp_validation_and_audit_answer_from_postgres(keys, monkeypatch):
+    """The two tools the 10-02 move to Postgres dropped: back, through the same key check and log,
+    answering from the reader login (pg/schema/008), in the SQLite-era shape."""
+    from api import mcp_tools
+    monkeypatch.setenv("XMETRICS_MCP_DSN", os.environ["XMETRICS_API_DSN"])
+    monkeypatch.delenv("XMETRICS_MCP_KEY", raising=False)
+    with pytest.raises(mcp_tools.Denied):
+        mcp_tools.validation_summary()
+    monkeypatch.setenv("XMETRICS_MCP_KEY", keys["good"])
+    v = mcp_tools.validation_summary()
+    assert v["rows"] == 95 and v["issues"] and all(k.endswith(("(error)", "(warn)")) for k in v["issues"])
+    a = mcp_tools.agent_audit()
+    assert a["attempts"] == sum(a["by_verdict"].values()) > 0 and set(a) == {"attempts", "by_verdict", "guardrail_fired", "classifiers"}
+    assert [(r[1], r[2], r[3]) for r in log_rows()][-3:] == [
+        ("mcp", "mcp:validation_summary", "missing"), ("mcp", "mcp:validation_summary", "ok"), ("mcp", "mcp:agent_audit", "ok")]
