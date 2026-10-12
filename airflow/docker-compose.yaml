@@ -1,0 +1,146 @@
+# Local Airflow for x-metrics — post-processing only, on a COPY of the database.
+#
+# Based on the official Airflow 3.3.2 docker-compose.yaml, cut down to LocalExecutor:
+# no Celery worker, no Redis, no Flower, no triggerer, no example DAGs.
+#
+#   cd airflow
+#   docker compose up -d --build        first start ~2-4 min (image build + db migrate)
+#   http://localhost:8080               login airflow / airflow (laptop only)
+#   docker compose down                 stop (keeps Airflow's own history in its volume)
+#
+# What it touches:
+#   - its OWN Postgres (service `airflow-db`, no port published): DAG runs, task states, retries.
+#     Never the x-metrics database.
+#   - the x-metrics copy database `xmetrics_af`, through host.docker.internal:5432 — the port the
+#     x-metrics compose stack publishes. Made by:  python -m ops.backup drill --into xmetrics_af --keep
+#     dags/_xm.py refuses any other database name, so a wrong DSN fails instead of writing to production.
+#   - the repo code, mounted read-only at /opt/xmetrics (DAG tasks call pg/, xmetrics/, ops/ as they are).
+#   - out/ mounted read-only; tasks copy the SQLite file before opening it (Store writes to the file it opens).
+#
+# Collection (Playwright, a logged-in browser on the Windows desktop) stays with the Windows
+# scheduled task "x-metrics weekly". A Linux container cannot drive that browser.
+
+x-airflow-common:
+  &airflow-common
+  build: .
+  image: xmetrics-airflow:3.3.2
+  environment:
+    &airflow-common-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@airflow-db/airflow
+    AIRFLOW__CORE__FERNET_KEY: ''
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__CORE__DEFAULT_TIMEZONE: 'UTC'
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: 'http://airflow-apiserver:8080/execution/'
+    AIRFLOW__API_AUTH__JWT_SECRET: 'xmetrics_local_jwt_secret'
+    AIRFLOW__API_AUTH__JWT_ISSUER: 'airflow'
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
+    AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
+    # the x-metrics side
+    PYTHONPATH: /opt/xmetrics
+    XMETRICS_AF_DSN: ${XMETRICS_AF_DSN:-postgresql://xmetrics:xmetrics@host.docker.internal:5432/xmetrics_af}
+    XMETRICS_SRC_OUT: /opt/xmetrics-out
+    XMETRICS_AF_WORK: /opt/airflow/work
+  volumes:
+    - ./dags:/opt/airflow/dags
+    - ./logs:/opt/airflow/logs
+    - ./config:/opt/airflow/config
+    - ./work:/opt/airflow/work
+    - ../xmetrics:/opt/xmetrics/xmetrics:ro
+    - ../pg:/opt/xmetrics/pg:ro
+    - ../ops:/opt/xmetrics/ops:ro
+    - ../out:/opt/xmetrics-out:ro
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  user: "50000:0"
+  depends_on:
+    &airflow-common-depends-on
+    airflow-db:
+      condition: service_healthy
+
+services:
+  airflow-db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type SchedulerJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  # Runs once: create folders, migrate Airflow's own database, create the login, then exit.
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -v -p /opt/airflow/{logs,dags,config,work}
+        /entrypoint airflow version
+        /entrypoint airflow config list >/dev/null
+        chown -R "50000:0" /opt/airflow/{logs,dags,config,work}
+    environment:
+      <<: *airflow-common-env
+      _AIRFLOW_DB_MIGRATE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: airflow
+      _AIRFLOW_WWW_USER_PASSWORD: airflow
+    user: "0:0"
+
+volumes:
+  airflow-db-volume:
