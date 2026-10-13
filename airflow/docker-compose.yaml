@@ -39,7 +39,7 @@ x-airflow-common:
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'true'
     AIRFLOW_CONFIG: '/opt/airflow/config/airflow.cfg'
     # the x-metrics side
-    PYTHONPATH: /opt/xmetrics
+    PYTHONPATH: /opt/xmetrics:/opt/media
     XMETRICS_AF_DSN: ${XMETRICS_AF_DSN:-postgresql://xmetrics:xmetrics@host.docker.internal:5432/xmetrics_af}
     XMETRICS_SRC_OUT: /opt/xmetrics-out
     XMETRICS_AF_WORK: /opt/airflow/work
@@ -50,6 +50,8 @@ x-airflow-common:
     AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
     AWS_DEFAULT_REGION: ap-northeast-2
     XMETRICS_LAKE_BUCKET: ether-xmetrics-lake
+    # media_lake_glue reads (never writes) the podcast table in the `discovery` database
+    MEDIA_DISCOVERY_DSN: ${MEDIA_DISCOVERY_DSN:-postgresql://xmetrics:xmetrics@host.docker.internal:5432/discovery}
   volumes:
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs
@@ -60,6 +62,8 @@ x-airflow-common:
     - ../ops:/opt/xmetrics/ops:ro
     - ../dashboards:/opt/xmetrics/dashboards:ro
     - ../out:/opt/xmetrics-out:ro
+    # media-discovery's discovery/ package, for the media_lake_glue DAG (Glue job + Postgres comparison)
+    - ../../media-discovery/discovery:/opt/media/discovery:ro
   extra_hosts:
     - "host.docker.internal:host-gateway"
   user: "50000:0"

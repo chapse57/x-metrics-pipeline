@@ -112,3 +112,20 @@ def test_dag_steps_call_the_pipeline_code():
     assert "from ops.pipeline import step_load" in src
     assert "from ops.pipeline import step_diff" in src
     assert "mart.v_validation_issues" in src
+
+
+def test_glue_dag_never_retries_the_start():
+    """A retry of start_glue would start, and pay for, a second Spark run; waiting may repeat."""
+    tree = ast.parse((DAGS / "media_lake_glue.py").read_text(encoding="utf-8"))
+    retries = {}
+    for f in ast.walk(tree):
+        if isinstance(f, ast.FunctionDef):
+            for d in f.decorator_list:
+                if isinstance(d, ast.Call) and getattr(d.func, "id", None) == "task":
+                    retries[f.name] = next(ast.literal_eval(k.value) for k in d.keywords if k.arg == "retries")
+    assert retries == {"start_glue": 0, "wait_glue": 2, "compare_postgres": 1}
+    dag = next(c for c in ast.walk(tree) if isinstance(c, ast.Call) and getattr(c.func, "id", None) == "dag")
+    kw = {k.arg: k.value for k in dag.keywords}
+    assert ast.literal_eval(kw["dag_id"]) == "media_lake_glue"
+    assert ast.literal_eval(kw["schedule"]) is None
+    assert ast.literal_eval(kw["max_active_runs"]) == 1
