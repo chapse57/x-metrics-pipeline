@@ -1,0 +1,200 @@
+# Airflow task log excerpts — airflow/logs (git-ignored), printed by tools/airflow_log_excerpts.py
+# times are UTC; 'error' level on progress lines is Airflow tagging stderr, not a failure
+
+######## DAG media_lake_glue
+
+=== manual__2026-10-13T04:52:04.105007+00:00
+--- compare_postgres attempt=1
+  2026-10-13 04:54:29 error OK   rows
+  2026-10-13 04:54:29 error OK   itunes_ids_on_more_than_one_row
+  2026-10-13 04:54:29 error OK   url_keys_on_more_than_one_row
+  2026-10-13 04:54:29 error OK   per-year feeds / with_itunes_id / episodes
+  2026-10-13 04:54:29 error OK   top 10 languages
+  2026-10-13 04:54:29 info  {'job': 'xmetrics-podcast-aggregates', 'error': None, 'state': 'SUCCEEDED', 'run_id': 'jr_0fdbf507b77533ce0206795d5e93546eb28a0931e18380686f3a19d9ea222d12', 'run_tag': '20261013T045207Z', 'workers': 2, 'dpu_seconds': 255.0, 'worker_type': 'G.1X', 'glue_version': '5.1', 'usd_estimate': 0.0312, 'execution_seconds': 127, 'wall_seconds_from_start_call': 136, 'spark': '3.5.6-amzn-1', 'spark_seconds': {'read_and_cache': 66.3, 'total': 81.1}, 'agree': 5, 'of': 5, 'languages': 952, 'output': 's3://ether-xmetrics-lake/media/aggregates/'}
+  2026-10-13 04:54:29 info  OK   rows
+  2026-10-13 04:54:29 info  OK   itunes_ids_on_more_than_one_row
+  2026-10-13 04:54:29 info  OK   url_keys_on_more_than_one_row
+  2026-10-13 04:54:29 info  OK   per-year feeds / with_itunes_id / episodes
+  2026-10-13 04:54:29 info  OK   top 10 languages
+  2026-10-13 04:54:29 info  Done. Returned value was: {'run_id': 'jr_0fdbf507b77533ce0206795d5e93546eb28a0931e18380686f3a19d9ea222d12', 'agree': 5, 'of': 5, 'execution_seconds': 127, 'usd_estimate': 0.0312}
+--- start_glue attempt=1
+  2026-10-13 04:52:07 error glue job updated, run jr_0fdbf507b77533ce0206795d5e93546eb28a0931e18380686f3a19d9ea222d12 started
+  2026-10-13 04:52:07 info  {'job': 'xmetrics-podcast-aggregates', 'job_state': 'updated', 'run_id': 'jr_0fdbf507b77533ce0206795d5e93546eb28a0931e18380686f3a19d9ea222d12', 'run_tag': '20261013T045207Z', 'started': 1791867127.8802714}
+  2026-10-13 04:52:07 info  Done. Returned value was: {'job': 'xmetrics-podcast-aggregates', 'job_state': 'updated', 'run_id': 'jr_0fdbf507b77533ce0206795d5e93546eb28a0931e18380686f3a19d9ea222d12', 'run_tag': '20261013T045207Z', 'started': 1791867127.8802714}
+--- wait_glue attempt=1
+  2026-10-13 04:52:08 error RUNNING 1s
+  2026-10-13 04:52:23 error RUNNING 16s
+  2026-10-13 04:52:38 error RUNNING 31s
+  2026-10-13 04:52:53 error RUNNING 46s
+  2026-10-13 04:53:08 error RUNNING 61s
+  2026-10-13 04:53:23 error RUNNING 76s
+  2026-10-13 04:53:38 error RUNNING 91s
+  2026-10-13 04:53:54 error RUNNING 106s
+  2026-10-13 04:54:09 error RUNNING 121s
+  2026-10-13 04:54:24 info  {'job': 'xmetrics-podcast-aggregates', 'run_id': 'jr_0fdbf507b77533ce0206795d5e93546eb28a0931e18380686f3a19d9ea222d12', 'run_tag': '20261013T045207Z', 'state': 'SUCCEEDED', 'glue_version': '5.1', 'worker_type': 'G.1X', 'workers': 2, 'execution_seconds': 127, 'dpu_seconds': 255.0, 'usd_estimate': 0.0312, 'wall_seconds_from_start_call': 136, 'error': None}
+  2026-10-13 04:54:24 info  Done. Returned value was: {'job': 'xmetrics-podcast-aggregates', 'run_id': 'jr_0fdbf507b77533ce0206795d5e93546eb28a0931e18380686f3a19d9ea222d12', 'run_tag': '20261013T045207Z', 'state': 'SUCCEEDED', 'glue_version': '5.1', 'worker_type': 'G.1X', 'workers': 2, 'execution_seconds': 127, 'dpu_seconds': 255.0, 'usd_estimate': 0.0312, 'wall_seconds_from_start_call': 136, 'error': None}
+
+######## DAG xmetrics_postprocess
+
+=== backfill__2026-09-07T00:00:00+00:00
+--- checks attempt=1
+  2026-10-13 01:21:40 info  {'run': '20260906T031921Z-playwright', 'measured': 3, 'issues': {'warn': 19}}
+  2026-10-13 01:21:40 info  Done. Returned value was: {'run': '20260906T031921Z-playwright', 'measured': 3, 'issues': {'warn': 19}}
+--- diff attempt=1
+  2026-10-13 01:21:39 info  changes since 20260906T030949Z-playwright → 20260906T031921Z-playwright: 0 flagged | 0 new | 0 dropped | 3 unchanged of 3 · tried 3: 3 measured · SQL == Python on 3 of 3 rows
+  2026-10-13 01:21:39 info  Done. Returned value was: changes since 20260906T030949Z-playwright → 20260906T031921Z-playwright: 0 flagged | 0 new | 0 dropped | 3 unchanged of 3 · tried 3: 3 measured · SQL == Python on 3 of 3 rows
+--- load attempt=1
+  2026-10-13 01:21:37 info  x.db: runs 1, accounts 20, measurements 3, posts 60, targets 3, audit 3
+  2026-10-13 01:21:37 info  {'before': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}, 'after': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}}
+  2026-10-13 01:21:37 info  Done. Returned value was: {'db': '/opt/airflow/work/backfill__2026-09-07T00-00-00_00-00/x.db', 'out': '/opt/airflow/work/backfill__2026-09-07T00-00-00_00-00/out', 'run_id': '20260906T031921Z-playwright', 'rows_before': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}, 'rows_after': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}}
+--- snapshot attempt=1
+  2026-10-13 01:21:36 info  week [2026-08-31, 2026-09-07) -> run 20260906T031921Z-playwright
+  2026-10-13 01:21:36 info  Done. Returned value was: {'run_id': '20260906T031921Z-playwright', 'db': '/opt/airflow/work/backfill__2026-09-07T00-00-00_00-00/x.db', 'out': '/opt/airflow/work/backfill__2026-09-07T00-00-00_00-00/out'}
+
+=== backfill__2026-09-14T00:00:00+00:00
+--- snapshot attempt=1
+  2026-10-13 01:21:36 info  Skipping task.
+
+=== backfill__2026-09-21T00:00:00+00:00
+--- checks attempt=1
+  2026-10-13 01:21:40 info  {'run': '20260918T020745Z-playwright', 'measured': 3, 'issues': {'warn': 19}}
+  2026-10-13 01:21:40 info  Done. Returned value was: {'run': '20260918T020745Z-playwright', 'measured': 3, 'issues': {'warn': 19}}
+--- diff attempt=1
+  2026-10-13 01:21:39 info  changes since 20260906T031921Z-playwright → 20260918T020745Z-playwright: 2 flagged | 0 new | 0 dropped | 1 unchanged of 3 · tried 3: 3 measured · SQL == Python on 3 of 3 rows
+  2026-10-13 01:21:39 info  Done. Returned value was: changes since 20260906T031921Z-playwright → 20260918T020745Z-playwright: 2 flagged | 0 new | 0 dropped | 1 unchanged of 3 · tried 3: 3 measured · SQL == Python on 3 of 3 rows
+--- load attempt=1
+  2026-10-13 01:21:37 info  x.db: runs 1, accounts 20, measurements 3, posts 60, targets 3, audit 3
+  2026-10-13 01:21:37 info  {'before': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}, 'after': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}}
+  2026-10-13 01:21:37 info  Done. Returned value was: {'db': '/opt/airflow/work/backfill__2026-09-21T00-00-00_00-00/x.db', 'out': '/opt/airflow/work/backfill__2026-09-21T00-00-00_00-00/out', 'run_id': '20260918T020745Z-playwright', 'rows_before': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}, 'rows_after': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}}
+--- snapshot attempt=1
+  2026-10-13 01:21:36 info  week [2026-09-14, 2026-09-21) -> run 20260918T020745Z-playwright
+  2026-10-13 01:21:36 info  Done. Returned value was: {'run_id': '20260918T020745Z-playwright', 'db': '/opt/airflow/work/backfill__2026-09-21T00-00-00_00-00/x.db', 'out': '/opt/airflow/work/backfill__2026-09-21T00-00-00_00-00/out'}
+
+=== backfill__2026-09-28T00:00:00+00:00
+--- checks attempt=1
+  2026-10-13 01:21:40 info  {'run': '20260923T091254Z-playwright', 'measured': 20, 'issues': {'warn': 19}}
+  2026-10-13 01:21:40 info  Done. Returned value was: {'run': '20260923T091254Z-playwright', 'measured': 20, 'issues': {'warn': 19}}
+--- diff attempt=1
+  2026-10-13 01:21:39 info  changes since each account's previous measurement (20260907T022451Z-legacy-import … 20260918T020745Z-playwright) → 20260923T091254Z-playwright: 10 flagged | 0 new | 0 dropped | 10 unchanged of 20 · tried 20: 20 measured · SQL == Python on 3 of 20 rows
+  2026-10-13 01:21:39 info  Done. Returned value was: changes since each account's previous measurement (20260907T022451Z-legacy-import … 20260918T020745Z-playwright) → 20260923T091254Z-playwright: 10 flagged | 0 new | 0 dropped | 10 unchanged of 20 · tried 20: 20 measured · SQL == Python on 3 of 20 rows
+--- load attempt=1
+  2026-10-13 01:21:37 info  x.db: runs 1, accounts 20, measurements 20, posts 400, targets 20, audit 3
+  2026-10-13 01:21:37 info  {'before': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}, 'after': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}}
+  2026-10-13 01:21:37 info  Done. Returned value was: {'db': '/opt/airflow/work/backfill__2026-09-28T00-00-00_00-00/x.db', 'out': '/opt/airflow/work/backfill__2026-09-28T00-00-00_00-00/out', 'run_id': '20260923T091254Z-playwright', 'rows_before': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}, 'rows_after': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}}
+--- snapshot attempt=1
+  2026-10-13 01:21:36 info  week [2026-09-21, 2026-09-28) -> run 20260923T091254Z-playwright
+  2026-10-13 01:21:36 info  Done. Returned value was: {'run_id': '20260923T091254Z-playwright', 'db': '/opt/airflow/work/backfill__2026-09-28T00-00-00_00-00/x.db', 'out': '/opt/airflow/work/backfill__2026-09-28T00-00-00_00-00/out'}
+
+=== backfill__2026-10-05T00:00:00+00:00
+--- snapshot attempt=1
+  2026-10-13 01:21:36 info  Skipping task.
+
+=== manual__2026-10-13T01:12:40.862172+00:00
+--- checks attempt=1
+  2026-10-13 01:12:51 info  {'run': '20261008T023253Z-playwright', 'measured': 19, 'issues': {'warn': 19}}
+  2026-10-13 01:12:51 info  Done. Returned value was: {'run': '20261008T023253Z-playwright', 'measured': 19, 'issues': {'warn': 19}}
+--- diff attempt=1
+  2026-10-13 01:12:50 info  changes since 20260923T091254Z-playwright → 20261008T023253Z-playwright: 7 flagged | 0 new | 0 dropped | 12 unchanged of 19 · tried 20: 19 measured, 1 failed · SQL == Python on 19 of 19 rows
+  2026-10-13 01:12:50 info  Done. Returned value was: changes since 20260923T091254Z-playwright → 20261008T023253Z-playwright: 7 flagged | 0 new | 0 dropped | 12 unchanged of 19 · tried 20: 19 measured, 1 failed · SQL == Python on 19 of 19 rows
+--- load attempt=1
+  2026-10-13 01:12:49 info  x.db: runs 1, accounts 20, measurements 19, posts 380, targets 20, audit 3
+  2026-10-13 01:12:49 info  {'before': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}, 'after': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}}
+  2026-10-13 01:12:49 info  Done. Returned value was: {'db': '/opt/airflow/work/manual__2026-10-13T01-12-40.862172_00-00/x.db', 'out': '/opt/airflow/work/manual__2026-10-13T01-12-40.862172_00-00/out', 'run_id': '20261008T023253Z-playwright', 'rows_before': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}, 'rows_after': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}}
+--- snapshot attempt=1
+  2026-10-13 01:12:47 info  week [2026-10-06, 2026-10-13) -> run 20261008T023253Z-playwright
+  2026-10-13 01:12:47 info  Done. Returned value was: {'run_id': '20261008T023253Z-playwright', 'db': '/opt/airflow/work/manual__2026-10-13T01-12-40.862172_00-00/x.db', 'out': '/opt/airflow/work/manual__2026-10-13T01-12-40.862172_00-00/out'}
+
+=== manual__2026-10-13T01:44:04.966558+00:00
+--- load attempt=1
+  2026-10-13 01:44:09 error Task failed with exception  [RuntimeError: rehearsal: fail_at=load]
+--- load attempt=2
+  2026-10-13 01:44:40 error Task failed with exception  [RuntimeError: rehearsal: fail_at=load]
+--- load attempt=3
+  2026-10-13 01:45:11 error Task failed with exception  [RuntimeError: rehearsal: fail_at=load]
+--- load attempt=4
+  2026-10-13 01:45:42 error Task failed with exception  [RuntimeError: rehearsal: fail_at=load]
+--- snapshot attempt=1
+  2026-10-13 01:44:08 info  week [2026-10-06, 2026-10-13) -> run 20261008T023253Z-playwright
+  2026-10-13 01:44:08 info  Done. Returned value was: {'run_id': '20261008T023253Z-playwright', 'db': '/opt/airflow/work/manual__2026-10-13T01-44-04.966558_00-00/x.db', 'out': '/opt/airflow/work/manual__2026-10-13T01-44-04.966558_00-00/out'}
+
+=== manual__2026-10-13T02:14:45.369702+00:00
+--- athena_checks attempt=1
+  2026-10-13 02:15:04 info  OK  accounts_measured    postgres=94  athena=94
+  2026-10-13 02:15:04 info  OK  avg_engagement_pct   postgres=0.1555  athena=0.1555
+  2026-10-13 02:15:04 info  OK  max_followers        postgres=2500000  athena=2500000
+  2026-10-13 02:15:04 info  OK  changes_rows         postgres=19  athena=19
+  2026-10-13 02:15:04 info  OK  changes_flagged      postgres=7  athena=7
+  2026-10-13 02:15:04 info  OK  changes_dropped      postgres=0  athena=0
+  2026-10-13 02:15:04 info  OK  latest_run           postgres=20261008T023253Z-playwright  athena=20261008T023253Z-playwright
+  2026-10-13 02:15:04 info  OK  data_taken_at_utc    postgres=2026-10-08 02:37:08  athena=2026-10-08 02:37:08
+  2026-10-13 02:15:04 info  OK  age_days             postgres=4  athena=4
+  2026-10-13 02:15:04 info  9 of 9 agree · Athena scanned 2714 bytes in 760 ms
+  2026-10-13 02:15:04 info  Done. Returned value was: {'agree': 9, 'of': 9, 'scanned_bytes': 2714, 'ms': 760}
+--- athena_tables attempt=1
+  2026-10-13 02:15:02 info  {'dt': '2026-10-13', 'tables': ['runs', 'latest', 'changes'], 'ddl_scanned_bytes': 0}
+  2026-10-13 02:15:02 info  Done. Returned value was: {'dt': '2026-10-13', 'tables': {'runs': {'key': 'xmetrics/runs/dt=2026-10-13/part-0.parquet', 'rows': 6, 'bytes': 4196, 'columns': [('run_id', 'string'), ('started_at', 'timestamp'), ('finished_at', 'timestamp'), ('source', 'string'), ('note', 'string'), ('taken_at', 'timestamp'), ('accounts_measured', 'int'), ('targets', 'int'), ('missing', 'int'), ('failed', 'int'), ('not_reached', 'int'), ('complete', 'boolean'), ('recency', 'int')]}, 'latest': {'key': 'xmetrics/latest/dt=2026-10-13/part-0.parquet', 'rows': 95, 'bytes': 13246, 'columns': [('handle', 'string'), ('di
+--- checks attempt=1
+  2026-10-13 02:14:51 info  {'run': '20261008T023253Z-playwright', 'measured': 19, 'issues': {'warn': 19}}
+  2026-10-13 02:14:51 info  Done. Returned value was: {'run': '20261008T023253Z-playwright', 'measured': 19, 'issues': {'warn': 19}}
+--- diff attempt=1
+  2026-10-13 02:14:50 info  changes since 20260923T091254Z-playwright → 20261008T023253Z-playwright: 7 flagged | 0 new | 0 dropped | 12 unchanged of 19 · tried 20: 19 measured, 1 failed · SQL == Python on 19 of 19 rows
+  2026-10-13 02:14:50 info  Done. Returned value was: changes since 20260923T091254Z-playwright → 20261008T023253Z-playwright: 7 flagged | 0 new | 0 dropped | 12 unchanged of 19 · tried 20: 19 measured, 1 failed · SQL == Python on 19 of 19 rows
+--- export_s3 attempt=1
+  2026-10-13 02:14:53 info  {'latest': {'key': 'xmetrics/latest/dt=2026-10-13/part-0.parquet', 'rows': 95, 'bytes': 13246}, 'changes': {'key': 'xmetrics/changes/dt=2026-10-13/part-0.parquet', 'rows': 19, 'bytes': 8896}, 'runs': {'key': 'xmetrics/runs/dt=2026-10-13/part-0.parquet', 'rows': 6, 'bytes': 4196}}
+  2026-10-13 02:14:53 info  Done. Returned value was: {'dt': '2026-10-13', 'tables': {'latest': {'key': 'xmetrics/latest/dt=2026-10-13/part-0.parquet', 'rows': 95, 'bytes': 13246, 'columns': [('handle', 'string'), ('display', 'string'), ('niche', 'string'), ('status', 'string'), ('dm_open', 'boolean'), ('run_id', 'string'), ('source', 'string'), ('measured_at', 'timestamp'), ('followers', 'int'), ('tier', 'string'), ('engagement_rate', 'double'), ('views_to_followers', 'double'), ('posts_measured', 'int'), ('days_since_last_post', 'int'), ('median_likes', 'double'), ('median_replies', 'double'), ('median_reposts', 'doubl
+--- load attempt=1
+  2026-10-13 02:14:49 info  x.db: runs 1, accounts 20, measurements 19, posts 380, targets 20, audit 3
+  2026-10-13 02:14:49 info  {'before': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}, 'after': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}}
+  2026-10-13 02:14:49 info  Done. Returned value was: {'db': '/opt/airflow/work/manual__2026-10-13T02-14-45.369702_00-00/x.db', 'out': '/opt/airflow/work/manual__2026-10-13T02-14-45.369702_00-00/out', 'run_id': '20261008T023253Z-playwright', 'rows_before': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}, 'rows_after': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}}
+--- snapshot attempt=1
+  2026-10-13 02:14:49 info  week [2026-10-06, 2026-10-13) -> run 20261008T023253Z-playwright
+  2026-10-13 02:14:49 info  Done. Returned value was: {'run_id': '20261008T023253Z-playwright', 'db': '/opt/airflow/work/manual__2026-10-13T02-14-45.369702_00-00/x.db', 'out': '/opt/airflow/work/manual__2026-10-13T02-14-45.369702_00-00/out'}
+
+=== manual__2026-10-13T02:15:57.192080+00:00
+--- athena_checks attempt=1
+  2026-10-13 02:16:13 info  OK  accounts_measured    postgres=94  athena=94
+  2026-10-13 02:16:13 info  OK  avg_engagement_pct   postgres=0.1555  athena=0.1555
+  2026-10-13 02:16:13 info  OK  max_followers        postgres=2500000  athena=2500000
+  2026-10-13 02:16:13 info  OK  changes_rows         postgres=19  athena=19
+  2026-10-13 02:16:13 info  OK  changes_flagged      postgres=7  athena=7
+  2026-10-13 02:16:13 info  OK  changes_dropped      postgres=0  athena=0
+  2026-10-13 02:16:13 info  OK  latest_run           postgres=20261008T023253Z-playwright  athena=20261008T023253Z-playwright
+  2026-10-13 02:16:13 info  OK  data_taken_at_utc    postgres=2026-10-08 02:37:08  athena=2026-10-08 02:37:08
+  2026-10-13 02:16:13 info  OK  age_days             postgres=4  athena=4
+  2026-10-13 02:16:13 info  9 of 9 agree · Athena scanned 2714 bytes in 844 ms
+  2026-10-13 02:16:13 info  Done. Returned value was: {'agree': 9, 'of': 9, 'scanned_bytes': 2714, 'ms': 844}
+--- athena_tables attempt=1
+  2026-10-13 02:16:11 info  {'dt': '2026-10-13', 'tables': ['runs', 'latest', 'changes'], 'ddl_scanned_bytes': 0}
+  2026-10-13 02:16:11 info  Done. Returned value was: {'dt': '2026-10-13', 'tables': {'runs': {'key': 'xmetrics/runs/dt=2026-10-13/part-0.parquet', 'rows': 6, 'bytes': 4196, 'columns': [('run_id', 'string'), ('started_at', 'timestamp'), ('finished_at', 'timestamp'), ('source', 'string'), ('note', 'string'), ('taken_at', 'timestamp'), ('accounts_measured', 'int'), ('targets', 'int'), ('missing', 'int'), ('failed', 'int'), ('not_reached', 'int'), ('complete', 'boolean'), ('recency', 'int')]}, 'latest': {'key': 'xmetrics/latest/dt=2026-10-13/part-0.parquet', 'rows': 95, 'bytes': 13246, 'columns': [('handle', 'string'), ('di
+--- checks attempt=1
+  2026-10-13 02:16:01 info  {'run': '20261008T023253Z-playwright', 'measured': 19, 'issues': {'warn': 19}}
+  2026-10-13 02:16:01 info  Done. Returned value was: {'run': '20261008T023253Z-playwright', 'measured': 19, 'issues': {'warn': 19}}
+--- diff attempt=1
+  2026-10-13 02:16:00 info  changes since 20260923T091254Z-playwright → 20261008T023253Z-playwright: 7 flagged | 0 new | 0 dropped | 12 unchanged of 19 · tried 20: 19 measured, 1 failed · SQL == Python on 19 of 19 rows
+  2026-10-13 02:16:00 info  Done. Returned value was: changes since 20260923T091254Z-playwright → 20261008T023253Z-playwright: 7 flagged | 0 new | 0 dropped | 12 unchanged of 19 · tried 20: 19 measured, 1 failed · SQL == Python on 19 of 19 rows
+--- export_s3 attempt=1
+  2026-10-13 02:16:02 info  {'latest': {'key': 'xmetrics/latest/dt=2026-10-13/part-0.parquet', 'rows': 95, 'bytes': 13246}, 'changes': {'key': 'xmetrics/changes/dt=2026-10-13/part-0.parquet', 'rows': 19, 'bytes': 8896}, 'runs': {'key': 'xmetrics/runs/dt=2026-10-13/part-0.parquet', 'rows': 6, 'bytes': 4196}}
+  2026-10-13 02:16:02 info  Done. Returned value was: {'dt': '2026-10-13', 'tables': {'latest': {'key': 'xmetrics/latest/dt=2026-10-13/part-0.parquet', 'rows': 95, 'bytes': 13246, 'columns': [('handle', 'string'), ('display', 'string'), ('niche', 'string'), ('status', 'string'), ('dm_open', 'boolean'), ('run_id', 'string'), ('source', 'string'), ('measured_at', 'timestamp'), ('followers', 'int'), ('tier', 'string'), ('engagement_rate', 'double'), ('views_to_followers', 'double'), ('posts_measured', 'int'), ('days_since_last_post', 'int'), ('median_likes', 'double'), ('median_replies', 'double'), ('median_reposts', 'doubl
+--- load attempt=1
+  2026-10-13 02:15:59 info  x.db: runs 1, accounts 20, measurements 19, posts 380, targets 20, audit 3
+  2026-10-13 02:15:59 info  {'before': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}, 'after': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}}
+  2026-10-13 02:15:59 info  Done. Returned value was: {'db': '/opt/airflow/work/manual__2026-10-13T02-15-57.192080_00-00/x.db', 'out': '/opt/airflow/work/manual__2026-10-13T02-15-57.192080_00-00/out', 'run_id': '20261008T023253Z-playwright', 'rows_before': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}, 'rows_after': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}}
+--- snapshot attempt=1
+  2026-10-13 02:15:58 info  week [2026-10-06, 2026-10-13) -> run 20261008T023253Z-playwright
+  2026-10-13 02:15:58 info  Done. Returned value was: {'run_id': '20261008T023253Z-playwright', 'db': '/opt/airflow/work/manual__2026-10-13T02-15-57.192080_00-00/x.db', 'out': '/opt/airflow/work/manual__2026-10-13T02-15-57.192080_00-00/out'}
+
+=== scheduled__2026-10-12T00:00:00+00:00
+--- checks attempt=1
+  2026-10-13 01:12:46 info  {'run': '20261008T023253Z-playwright', 'measured': 19, 'issues': {'warn': 19}}
+  2026-10-13 01:12:46 info  Done. Returned value was: {'run': '20261008T023253Z-playwright', 'measured': 19, 'issues': {'warn': 19}}
+--- diff attempt=1
+  2026-10-13 01:12:45 info  changes since 20260923T091254Z-playwright → 20261008T023253Z-playwright: 7 flagged | 0 new | 0 dropped | 12 unchanged of 19 · tried 20: 19 measured, 1 failed · SQL == Python on 19 of 19 rows
+  2026-10-13 01:12:45 info  Done. Returned value was: changes since 20260923T091254Z-playwright → 20261008T023253Z-playwright: 7 flagged | 0 new | 0 dropped | 12 unchanged of 19 · tried 20: 19 measured, 1 failed · SQL == Python on 19 of 19 rows
+--- load attempt=1
+  2026-10-13 01:12:45 info  x.db: runs 1, accounts 20, measurements 19, posts 380, targets 20, audit 3
+  2026-10-13 01:12:45 info  {'before': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}, 'after': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}}
+  2026-10-13 01:12:45 info  Done. Returned value was: {'db': '/opt/airflow/work/scheduled__2026-10-12T00-00-00_00-00/x.db', 'out': '/opt/airflow/work/scheduled__2026-10-12T00-00-00_00-00/out', 'run_id': '20261008T023253Z-playwright', 'rows_before': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}, 'rows_after': {'raw.runs': 10, 'raw.accounts': 148, 'raw.measurements': 143, 'raw.posts': 960, 'raw.run_targets': 184}}
+--- snapshot attempt=1
+  2026-10-13 01:12:44 info  week [2026-10-05, 2026-10-12) -> run 20261008T023253Z-playwright
+  2026-10-13 01:12:44 info  Done. Returned value was: {'run_id': '20261008T023253Z-playwright', 'db': '/opt/airflow/work/scheduled__2026-10-12T00-00-00_00-00/x.db', 'out': '/opt/airflow/work/scheduled__2026-10-12T00-00-00_00-00/out'}
+

@@ -50,11 +50,21 @@ one-off load of a public dump); trigger from the UI.
 
 ## Measured on 2026-10-13 (진우's PC, copy database)
 
-- Weekly run for 10-06..10-13: run `20261008T023253Z`, 7 flagged, SQL == Python 19 of 19, validation error 0 / warn 19; row counts unchanged by the load.
-- Backfill 2026-09-01..10-06: 5 runs — 3 loaded (09-06, 09-18, 09-23 collections), 2 skipped (week of 09-07: no collection; week of 09-28: the 10-04 run died before writing anything). Row counts unchanged by every load.
+- Weekly run for 10-06..10-13 (`scheduled__2026-10-12`: started by the scheduler the moment the DAG was unpaused, because Airflow runs the latest finished interval; no later interval has come yet, the next is 10-19): run `20261008T023253Z`, 7 flagged, SQL == Python 19 of 19, validation error 0 / warn 19; row counts unchanged by the load.
+- Backfill 2026-09-01..10-06: 5 runs — 3 loaded (09-06, 09-18, 09-23 collections), 2 skipped (week of 09-07: no collection; week of 09-28: the 10-04 run died before writing anything). Row counts unchanged by every load. Read that for what it is: the copy was restored from a backup that already held those runs, so the backfill re-loaded existing weeks — it shows the load is idempotent and that empty weeks are skipped, not that it filled a gap.
 - Failure rehearsal `fail_at=load`: 4 tries ~30 s apart, one Slack message after the 4th, diff/checks never ran.
 - S3 + Athena: 3 Parquet files (95 / 19 / 6 rows, 13.2 / 8.9 / 4.2 KB); the nine dashboard figures **9 of 9 equal** in Postgres and Athena; Athena scanned 2,714 bytes for them.
 - `media_lake_glue` (13:52 KST): all three tasks succeeded in 2 min 25 s. Glue 5.1, 2 × G.1X, 127 s execution, 255 DPU-seconds ≈ USD 0.031; Spark == Postgres **5 of 5** (rows 4,731,573, duplicate Apple ids 1,656, duplicate URL keys 3,756, 168 per-year cells, top 10 languages). Screenshot `../docs/airflow-media-lake-glue.png`.
+
+Evidence (the task logs in `logs/` are git-ignored; these are committed):
+
+| claim | where |
+|---|---|
+| 10 runs: 5 backfill, 1 scheduled, 4 manual (one failed on purpose) | `../docs/airflow-postprocess-runs.png` |
+| rehearsal: `load` failed after 4 tries, diff/checks `upstream_failed` | `../docs/airflow-retry-rehearsal.png` |
+| every line above, from the logs: row counts before/after each load, the skipped weeks, the four `RuntimeError: rehearsal: fail_at=load` at 01:44:09, 01:44:40, 01:45:11, 01:45:42 UTC, the nine Athena = Postgres lines, the Glue run | `../docs/airflow-log-excerpts-2026-10-13.txt` (made by `python tools/airflow_log_excerpts.py`) |
+
+The Airflow log viewer shows only two of the nine `OK` lines of `athena_checks`; the log file has all nine (see the excerpts).
 
 ## Start (Windows cmd)
 
