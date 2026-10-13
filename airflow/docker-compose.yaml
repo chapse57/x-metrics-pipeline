@@ -43,6 +43,13 @@ x-airflow-common:
     XMETRICS_AF_DSN: ${XMETRICS_AF_DSN:-postgresql://xmetrics:xmetrics@host.docker.internal:5432/xmetrics_af}
     XMETRICS_SRC_OUT: /opt/xmetrics-out
     XMETRICS_AF_WORK: /opt/airflow/work
+    # Optional, from airflow/.env (git-ignored): failure alerts go to the same Slack channel as the pipeline.
+    XMETRICS_SLACK_WEBHOOK: ${XMETRICS_SLACK_WEBHOOK:-}
+    # Optional, from airflow/.env: keys of the IAM user xmetrics-pipeline (one bucket + Athena, aws/iam-policy-xmetrics-lake.json).
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    AWS_DEFAULT_REGION: ap-northeast-2
+    XMETRICS_LAKE_BUCKET: ether-xmetrics-lake
   volumes:
     - ./dags:/opt/airflow/dags
     - ./logs:/opt/airflow/logs
@@ -51,6 +58,7 @@ x-airflow-common:
     - ../xmetrics:/opt/xmetrics/xmetrics:ro
     - ../pg:/opt/xmetrics/pg:ro
     - ../ops:/opt/xmetrics/ops:ro
+    - ../dashboards:/opt/xmetrics/dashboards:ro
     - ../out:/opt/xmetrics-out:ro
   extra_hosts:
     - "host.docker.internal:host-gateway"
