@@ -4,35 +4,64 @@
     {
       "Sid": "LakeBucket",
       "Effect": "Allow",
-      "Action": ["s3:ListBucket", "s3:GetBucketLocation", "s3:ListBucketMultipartUploads"],
+      "Action": [
+        "s3:ListBucket",
+        "s3:GetBucketLocation",
+        "s3:ListBucketMultipartUploads"
+      ],
       "Resource": "arn:aws:s3:::ether-xmetrics-lake"
     },
     {
       "Sid": "LakeObjects",
       "Effect": "Allow",
-      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:AbortMultipartUpload", "s3:ListMultipartUploadParts"],
+      "Action": [
+        "s3:GetObject",
+        "s3:PutObject",
+        "s3:DeleteObject",
+        "s3:AbortMultipartUpload",
+        "s3:ListMultipartUploadParts"
+      ],
       "Resource": "arn:aws:s3:::ether-xmetrics-lake/*"
     },
     {
       "Sid": "AthenaPrimaryWorkgroup",
       "Effect": "Allow",
-      "Action": ["athena:StartQueryExecution", "athena:GetQueryExecution", "athena:GetQueryResults", "athena:StopQueryExecution", "athena:GetWorkGroup"],
+      "Action": [
+        "athena:StartQueryExecution",
+        "athena:GetQueryExecution",
+        "athena:GetQueryResults",
+        "athena:StopQueryExecution",
+        "athena:GetWorkGroup"
+      ],
       "Resource": "arn:aws:athena:ap-northeast-2:*:workgroup/primary"
     },
     {
       "Sid": "AthenaCatalog",
       "Effect": "Allow",
-      "Action": ["athena:GetDataCatalog"],
+      "Action": [
+        "athena:GetDataCatalog"
+      ],
       "Resource": "arn:aws:athena:ap-northeast-2:*:datacatalog/AwsDataCatalog"
     },
     {
       "Sid": "GlueCatalogForAthenaDDL",
       "Effect": "Allow",
       "Action": [
-        "glue:GetDatabase", "glue:GetDatabases", "glue:CreateDatabase",
-        "glue:GetTable", "glue:GetTables", "glue:CreateTable", "glue:UpdateTable", "glue:DeleteTable",
-        "glue:GetPartition", "glue:GetPartitions", "glue:BatchGetPartition",
-        "glue:CreatePartition", "glue:BatchCreatePartition", "glue:DeletePartition", "glue:BatchDeletePartition"
+        "glue:GetDatabase",
+        "glue:GetDatabases",
+        "glue:CreateDatabase",
+        "glue:GetTable",
+        "glue:GetTables",
+        "glue:CreateTable",
+        "glue:UpdateTable",
+        "glue:DeleteTable",
+        "glue:GetPartition",
+        "glue:GetPartitions",
+        "glue:BatchGetPartition",
+        "glue:CreatePartition",
+        "glue:BatchCreatePartition",
+        "glue:DeletePartition",
+        "glue:BatchDeletePartition"
       ],
       "Resource": [
         "arn:aws:glue:ap-northeast-2:*:catalog",
@@ -42,6 +71,40 @@
         "arn:aws:glue:ap-northeast-2:*:database/media_lake",
         "arn:aws:glue:ap-northeast-2:*:table/media_lake/*"
       ]
+    },
+    {
+      "Sid": "GlueJob",
+      "Effect": "Allow",
+      "Action": [
+        "glue:CreateJob",
+        "glue:UpdateJob",
+        "glue:GetJob",
+        "glue:StartJobRun",
+        "glue:GetJobRun",
+        "glue:GetJobRuns",
+        "glue:BatchStopJobRun"
+      ],
+      "Resource": "arn:aws:glue:ap-northeast-2:*:job/xmetrics-*"
+    },
+    {
+      "Sid": "PassOnlyTheGlueRole",
+      "Effect": "Allow",
+      "Action": "iam:PassRole",
+      "Resource": "arn:aws:iam::*:role/xmetrics-glue-job",
+      "Condition": {
+        "StringEquals": {
+          "iam:PassedToService": "glue.amazonaws.com"
+        }
+      }
+    },
+    {
+      "Sid": "ReadGlueJobLogs",
+      "Effect": "Allow",
+      "Action": [
+        "logs:GetLogEvents",
+        "logs:FilterLogEvents"
+      ],
+      "Resource": "arn:aws:logs:ap-northeast-2:*:log-group:/aws-glue/jobs/*"
     }
   ]
 }
