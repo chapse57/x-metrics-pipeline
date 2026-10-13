@@ -24,18 +24,27 @@ import _lake  # noqa: E402
 import _xm  # noqa: E402
 
 
+# The guard parses the DSN with psycopg. tests.yml installs it (and fails on any skip);
+# weekly.yml installs only [dev], so there these three skip, like the Postgres tests do.
+needs_psycopg = pytest.mark.skipif(__import__("importlib").util.find_spec("psycopg") is None,
+                                   reason="psycopg not installed (weekly.yml installs only [dev])")
+
+
+@needs_psycopg
 def test_guard_refuses_the_production_database(monkeypatch):
     monkeypatch.setenv("XMETRICS_AF_DSN", "postgresql://xmetrics:x@host.docker.internal:5432/xmetrics")
     with pytest.raises(RuntimeError, match="xmetrics_af"):
         _xm.dsn()
 
 
+@needs_psycopg
 def test_guard_accepts_only_the_copy(monkeypatch):
     dsn = "postgresql://xmetrics:x@host.docker.internal:5432/xmetrics_af"
     monkeypatch.setenv("XMETRICS_AF_DSN", dsn)
     assert _xm.dsn() == dsn
 
 
+@needs_psycopg
 def test_guard_needs_a_dsn(monkeypatch):
     monkeypatch.delenv("XMETRICS_AF_DSN", raising=False)
     with pytest.raises(RuntimeError, match="not set"):
