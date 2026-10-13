@@ -38,7 +38,9 @@
         "arn:aws:glue:ap-northeast-2:*:catalog",
         "arn:aws:glue:ap-northeast-2:*:database/default",
         "arn:aws:glue:ap-northeast-2:*:database/xmetrics_lake",
-        "arn:aws:glue:ap-northeast-2:*:table/xmetrics_lake/*"
+        "arn:aws:glue:ap-northeast-2:*:table/xmetrics_lake/*",
+        "arn:aws:glue:ap-northeast-2:*:database/media_lake",
+        "arn:aws:glue:ap-northeast-2:*:table/media_lake/*"
       ]
     }
   ]
