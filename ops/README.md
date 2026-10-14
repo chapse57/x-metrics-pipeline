@@ -196,7 +196,7 @@ minutes later, and `--if-due 6` found the last success (10-08 02:32 UTC) six day
 |---|---|
 | 06:23 | an earlier logon: `not due: last successful run started 2026-10-08 02:32 UTC` — skipped, as it should be |
 | 07:45 | the Postgres container recreated by hand on a newer `postgres:16` image (`a3b7f434b2dc` → `ca0bd484cb98`). A `docker compose pull` for another project had moved the `postgres:16` tag, and this job's `docker compose up -d postgres` would otherwise have recreated the container in the middle of the run. `/health` ok afterwards |
-| 11:40 | attempt #8, `trigger: scheduled`: collect 20 tried, **20 measured**, 0 missing, 0 errors · load (measurements 20, posts 400) · diff: 4 flagged, 0 new, 0 dropped, 16 unchanged · **SQL == Python on 20 of 20 rows** · 241 s · Task Scheduler `LastTaskResult 0` |
+| 11:40 | attempt #8, `trigger: scheduled`: collect 20 tried, **20 measured**, 0 missing, 0 errors · load (measurements 20, posts 400) · diff: 4 flagged, 0 new, 0 dropped, 16 unchanged · **SQL == Python on 20 of 20 rows** · 241 s · Task Scheduler `LastTaskResult 0` · no Slack message (success is silent) |
 
 Evidence: `docs/health-first-scheduled.json` (`/health` right after the run); the log
 `out/logs/pipeline-20261014-1140.log` stays on the PC.
