@@ -187,6 +187,25 @@ What still is not covered: if the PC stays off, nothing runs and nothing is sent
 the only signal is the dashboard's age gauge turning red after 8 days. A server, or a
 check that runs somewhere else, is the fix for that; on one PC it is a known limit.
 
+### The first unattended run after the fix (2026-10-14)
+
+Nobody started it. The PC was restarted at 11:36 KST; the logon trigger started the job five
+minutes later, and `--if-due 6` found the last success (10-08 02:32 UTC) six days old.
+
+| when (KST) | what happened |
+|---|---|
+| 06:23 | an earlier logon: `not due: last successful run started 2026-10-08 02:32 UTC` — skipped, as it should be |
+| 07:45 | the Postgres container recreated by hand on a newer `postgres:16` image (`a3b7f434b2dc` → `ca0bd484cb98`). A `docker compose pull` for another project had moved the `postgres:16` tag, and this job's `docker compose up -d postgres` would otherwise have recreated the container in the middle of the run. `/health` ok afterwards |
+| 11:40 | attempt #8, `trigger: scheduled`: collect 20 tried, **20 measured**, 0 missing, 0 errors · load (measurements 20, posts 400) · diff: 4 flagged, 0 new, 0 dropped, 16 unchanged · **SQL == Python on 20 of 20 rows** · 241 s · Task Scheduler `LastTaskResult 0` |
+
+Evidence: `docs/health-first-scheduled.json` (`/health` right after the run); the log
+`out/logs/pipeline-20261014-1140.log` stays on the PC.
+
+What one run does not show: that it keeps running. The next run is due 6 days after this one
+started (10-20 02:40 UTC), so the Sunday trigger on 10-18 will log `not due`; the next real run is
+the first logon after 10-20 11:40 KST, or Sunday 10-25 22:00, whichever comes first, and only if the
+PC is on.
+
 ## Metabase's own database (seen 2026-09-28)
 
 Metabase keeps its dashboards and cards in a database of its own. In `docker-compose.yml` that
